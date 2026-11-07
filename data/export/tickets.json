@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "code": "DK-2901",
+    "title": "Job from Q-1049: Feeder materials",
+    "description": "• Copper wire 2.5 sq.mm FR — Red (Phase R) — 10 Mtr @ ₹42\n• Copper wire 2.5 sq.mm FR — Black (Neutral) — 10 Mtr @ ₹42",
+    "client_id": 5,
+    "site_id": 3,
+    "assigned_user_id": 37,
+    "priority": "High",
+    "status": "In progress",
+    "created_by": 21,
+    "created_at": "2026-11-07 08:47:37",
+    "updated_at": "2026-11-07 09:14:30",
+    "quotation_id": null
+  }
+]

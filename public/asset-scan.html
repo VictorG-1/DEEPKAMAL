@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepKamal asset</title>
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root { --ink:#0b1f33; --muted:#64748b; --line:#e2e8f0; --ok:#15803d; --bad:#b91c1c; }
+      body { margin:0; font-family:'Plus Jakarta Sans',system-ui,sans-serif; background:#f1f5f9; color:var(--ink); }
+      header { background:linear-gradient(135deg,#0b1f33,#1e3a5f); color:#fff; padding:28px 20px 36px; }
+      header img { height:42px; background:#fff; border-radius:8px; padding:4px 8px; }
+      main { margin:-20px auto 40px; max-width:560px; padding:0 16px; }
+      .card { background:#fff; border:1px solid var(--line); border-radius:18px; padding:18px; box-shadow:0 10px 30px rgba(15,23,42,.06); }
+      h1 { margin:10px 0 4px; font-size:1.45rem; } .muted { color:var(--muted); font-size:.9rem; }
+      .badge { display:inline-block; padding:4px 10px; border-radius:999px; font-size:.75rem; font-weight:800; background:#e2e8f0; }
+      .badge.bad { background:#fee2e2; color:var(--bad); } .badge.ok { background:#dcfce7; color:var(--ok); }
+      dl { display:grid; grid-template-columns:120px 1fr; gap:8px 12px; margin:16px 0 0; font-size:.92rem; }
+      dt { color:var(--muted); } dd { margin:0; font-weight:600; }
+      .hist { margin-top:16px; } .hist .row { padding:10px 0; border-top:1px solid var(--line); }
+      .hist strong { display:block; } .err { color:var(--bad); padding:24px; text-align:center; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <img src="/deepkamal-logo-cropped.png" alt="DeepKamal" />
+      <p class="muted" style="color:#cbd5e1;margin:12px 0 0">Asset register · scan sticker</p>
+    </header>
+    <main id="root"><div class="card muted">Loading…</div></main>
+    <script>
+      (async () => {
+        const token = location.pathname.split('/').pop();
+        const root = document.getElementById('root');
+        try {
+          const res = await fetch('/api/assets/public/' + encodeURIComponent(token));
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Not found');
+          const a = data.asset;
+          const overdue = a.overdue;
+          root.innerHTML = `
+            <div class="card">
+              <span class="badge ${overdue ? 'bad' : 'ok'}">${overdue ? 'Service due' : esc(a.status)}</span>
+              <h1>${esc(a.name)}</h1>
+              <p class="muted">${esc(a.assetType)} · ${esc(a.client || '')} · ${esc(a.site || '')}</p>
+              <dl>
+                <dt>Serial</dt><dd>${esc(a.serialNo || '—')}</dd>
+                <dt>Location</dt><dd>${esc(a.locationNote || '—')}</dd>
+                <dt>Capacity</dt><dd>${esc(a.capacity || '—')}</dd>
+                <dt>Last service</dt><dd>${esc(a.lastServiceOn || '—')}</dd>
+                <dt>Next service</dt><dd>${esc(a.nextServiceDue || '—')}</dd>
+                <dt>Next refill</dt><dd>${esc(a.nextRefillDue || '—')}</dd>
+                <dt>Hydro test</dt><dd>${esc(a.nextHydroDue || '—')}</dd>
+              </dl>
+              <div class="hist">
+                <h2 style="margin:0;font-size:1rem">Service history</h2>
+                ${(data.history || []).map((h) => `
+                  <div class="row"><strong>${esc(h.eventType)}</strong>
+                  <span class="muted">${esc(h.notes || '')} · ${esc(h.userName || '')} · ${esc(h.createdAt || '')}</span></div>
+                `).join('') || '<p class="muted">No history yet</p>'}
+              </div>
+            </div>`;
+        } catch (err) {
+          root.innerHTML = `<div class="card err">${esc(err.message)}</div>`;
+        }
+        function esc(v) {
+          return String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+      })();
+    </script>
+  </body>
+</html>

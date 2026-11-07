@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "name": "ElectroTrade Mumbai",
+    "phone": "9820001111",
+    "email": "sales@electrotrade.example",
+    "gstin": "27AABCE1234F1Z5",
+    "address": "Kurla, Mumbai",
+    "created_at": "2026-11-07 08:57:49"
+  },
+  {
+    "id": 2,
+    "name": "FireSafe Supplies",
+    "phone": "9820002222",
+    "email": "orders@firesafe.example",
+    "gstin": "27AABCF9876G1Z2",
+    "address": "Bhiwandi",
+    "created_at": "2026-11-07 08:57:49"
+  }
+]

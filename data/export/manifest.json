@@ -1,0 +1,28 @@
+{
+  "exportedAt": "2026-11-07T09:14:31.565Z",
+  "supabase": {
+    "enabled": false,
+    "url": null,
+    "mode": "sqlite-primary",
+    "note": "Not configured. DeepKamal uses local SQLite (data/deepkamal.db)."
+  },
+  "tables": {
+    "users": 20,
+    "clients": 1,
+    "sites": 1,
+    "tickets": 1,
+    "ticket_messages": 1,
+    "attendance": 15,
+    "quotations": 1,
+    "quotation_items": 2,
+    "invoices": 3,
+    "invoice_items": 4,
+    "site_assets": 3,
+    "asset_service_log": 0,
+    "materials": 241,
+    "inventory_stock": 232,
+    "vendors": 2,
+    "purchase_orders": 2,
+    "notifications": 6
+  }
+}

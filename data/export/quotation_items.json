@@ -1,0 +1,36 @@
+[
+  {
+    "id": 11,
+    "quotation_id": 3,
+    "material_id": 609,
+    "description": "Copper wire 2.5 sq.mm FR — Red (Phase R)",
+    "unit": "Mtr",
+    "qty": 10,
+    "rate": 42,
+    "amount": 420,
+    "sort_order": 0,
+    "sku": "EL-WR-25-R",
+    "category": "Electrical Wires & Cables",
+    "hsn": "8544",
+    "gst_pct": 18,
+    "tax_amount": 75.6,
+    "specs": "Phase R · power"
+  },
+  {
+    "id": 12,
+    "quotation_id": 3,
+    "material_id": 612,
+    "description": "Copper wire 2.5 sq.mm FR — Black (Neutral)",
+    "unit": "Mtr",
+    "qty": 10,
+    "rate": 42,
+    "amount": 420,
+    "sort_order": 1,
+    "sku": "EL-WR-25-K",
+    "category": "Electrical Wires & Cables",
+    "hsn": "8544",
+    "gst_pct": 18,
+    "tax_amount": 75.6,
+    "specs": "Neutral"
+  }
+]

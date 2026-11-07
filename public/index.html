@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1f33" />
+    <title>DeepKamal</title>
+    <link rel="icon" href="favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+    <link rel="manifest" href="app.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css?v=13" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  </head>
+  <body>
+    <!-- LOGIN -->
+    <div id="loginScreen" class="login">
+      <div class="login-hero">
+        <img src="deepkamal-logo-cropped.png" alt="DeepKamal" class="login-logo" />
+        <h1>Book trusted electrical & fire-safety experts</h1>
+        <p>Like a modern services marketplace — for DeepKamal jobs, partners, and customers.</p>
+      </div>
+      <div class="login-card">
+        <h2>Sign in</h2>
+        <p class="login-sub">Owner / manager / customer: <code>DeepKamal@1</code>. Partners: email + personal <strong>PIN</strong> (Team → Reset PIN).</p>
+        <div class="cred-box">
+          <button type="button" class="cred quick-login" data-email="owner@deepkamal.in" data-pass="DeepKamal@1"><strong>Owner</strong><span>owner@deepkamal.in</span></button>
+          <button type="button" class="cred quick-login" data-email="manager@deepkamal.in" data-pass="DeepKamal@1"><strong>Manager</strong><span>manager@deepkamal.in</span></button>
+          <button type="button" class="cred quick-login" data-email="partner@deepkamal.in" data-pass="DeepKamal@1"><strong>Partner</strong><span>partner@deepkamal.in</span></button>
+          <button type="button" class="cred quick-login" data-email="customer@deepkamal.in" data-pass="DeepKamal@1"><strong>Customer</strong><span>customer@deepkamal.in</span></button>
+        </div>
+        <details class="manual-login">
+          <summary>Or type email / password</summary>
+          <form id="loginForm" class="login-form">
+            <label>Email ID
+              <input id="loginEmail" type="email" autocomplete="username" value="owner@deepkamal.in" required />
+            </label>
+            <label>Password
+              <input id="loginPassword" type="text" autocomplete="current-password" value="DeepKamal@1" required />
+            </label>
+            <p class="form-error" id="loginError" role="alert"></p>
+            <button class="btn-primary" type="submit">Continue</button>
+          </form>
+        </details>
+        <p class="db-status" id="dbStatus">Checking database…</p>
+      </div>
+    </div>
+
+    <!-- APP -->
+    <div id="app" class="app" hidden>
+      <aside class="side" id="side">
+        <div class="side-brand">
+          <img src="deepkamal-logo-cropped.png" alt="DeepKamal" width="180" height="88" />
+        </div>
+        <nav id="sideNav" class="side-nav"></nav>
+        <div class="side-user">
+          <div class="avatar" id="avatar">DK</div>
+          <div class="side-user-meta">
+            <strong id="whoName">—</strong>
+            <small id="whoRole">—</small>
+          </div>
+          <button type="button" id="logoutBtn" class="btn-logout" title="Log out">Log out</button>
+        </div>
+      </aside>
+      <section class="main">
+        <header class="topbar">
+          <button type="button" id="menuBtn" class="icon-btn menu">☰</button>
+          <div>
+            <p class="eyebrow" id="eyebrow">DeepKamal</p>
+            <h1 id="title">Home</h1>
+          </div>
+          <div id="topCta"></div>
+        </header>
+        <div id="screen" class="screen"></div>
+      </section>
+      <nav id="tabBar" class="tabbar" hidden></nav>
+    </div>
+
+    <div id="sheet" class="sheet" hidden>
+      <div class="sheet-panel">
+        <button type="button" class="sheet-close" id="sheetClose">×</button>
+        <div id="sheetBody"></div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./sw.js?v=13').catch(() => {});
+      }
+    </script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="barcode.js?v=13"></script>
+    <script src="api.js?v=13"></script>
+    <script src="offline.js?v=13"></script>
+    <script src="field.js?v=13"></script>
+    <script src="extras.js?v=13"></script>
+    <script src="app.js?v=13"></script>
+  </body>
+</html>

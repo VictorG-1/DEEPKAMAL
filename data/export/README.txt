@@ -1,0 +1,5 @@
+-- Supabase / Postgres import hints (create matching tables, then upsert from JSON)
+-- 1. Create project at supabase.com and set SUPABASE_URL + SUPABASE_ANON_KEY in .env
+-- 2. Keep SQLite as primary until you cut over; nightly backups continue via npm run backup:nightly
+-- 3. Import JSON with a small loader or Table Editor
+-- Exported: 2026-11-07T09:14:31.565Z

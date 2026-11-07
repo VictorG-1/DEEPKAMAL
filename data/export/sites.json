@@ -1,0 +1,13 @@
+[
+  {
+    "id": 3,
+    "client_id": 5,
+    "name": "Primary site",
+    "address": "Andheri East",
+    "city": "Mumbai",
+    "planned_material": 840,
+    "used_material": 840,
+    "latitude": null,
+    "longitude": null
+  }
+]

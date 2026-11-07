@@ -1,0 +1,54 @@
+[
+  {
+    "id": 1,
+    "invoice_id": 1,
+    "description": "Copper wire 2.5 sq.mm FR — Red (Phase R)",
+    "hsn": "8544",
+    "qty": 10,
+    "unit": "Mtr",
+    "rate": 42,
+    "gst_pct": 18,
+    "tax_amount": 75.6,
+    "amount": 420,
+    "sort_order": 0
+  },
+  {
+    "id": 2,
+    "invoice_id": 1,
+    "description": "Copper wire 2.5 sq.mm FR — Black (Neutral)",
+    "hsn": "8544",
+    "qty": 10,
+    "unit": "Mtr",
+    "rate": 42,
+    "gst_pct": 18,
+    "tax_amount": 75.6,
+    "amount": 420,
+    "sort_order": 1
+  },
+  {
+    "id": 3,
+    "invoice_id": 2,
+    "description": "Credit against INV-1001",
+    "hsn": null,
+    "qty": 1,
+    "unit": "Lot",
+    "rate": -991.2,
+    "gst_pct": 18,
+    "tax_amount": 0,
+    "amount": -991.2,
+    "sort_order": 0
+  },
+  {
+    "id": 4,
+    "invoice_id": 3,
+    "description": "Credit against INV-1001",
+    "hsn": null,
+    "qty": 1,
+    "unit": "Lot",
+    "rate": -991.2,
+    "gst_pct": 18,
+    "tax_amount": 0,
+    "amount": -991.2,
+    "sort_order": 0
+  }
+]

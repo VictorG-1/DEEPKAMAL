@@ -1,0 +1,53 @@
+[
+  {
+    "id": 1,
+    "code": "INV-1001",
+    "client_id": 5,
+    "quotation_id": 3,
+    "order_id": null,
+    "invoice_date": "2026-11-07",
+    "due_date": "2026-11-22",
+    "subtotal": 840,
+    "tax_amount": 151.2,
+    "amount": 991.2,
+    "amount_paid": 996.48,
+    "status": "Paid",
+    "notes": "Tax invoice from Q-1049",
+    "created_by": 21,
+    "created_at": "2026-11-07 08:58:54"
+  },
+  {
+    "id": 2,
+    "code": "CN-1001",
+    "client_id": 5,
+    "quotation_id": 3,
+    "order_id": null,
+    "invoice_date": "2026-11-07",
+    "due_date": "2026-11-07",
+    "subtotal": -991.2,
+    "tax_amount": 0,
+    "amount": -991.2,
+    "amount_paid": 0,
+    "status": "CreditNote",
+    "notes": "Credit note against INV-1001",
+    "created_by": 21,
+    "created_at": "2026-11-07 08:59:08"
+  },
+  {
+    "id": 3,
+    "code": "CN-1002",
+    "client_id": 5,
+    "quotation_id": 3,
+    "order_id": null,
+    "invoice_date": "2026-11-07",
+    "due_date": "2026-11-07",
+    "subtotal": -991.2,
+    "tax_amount": 0,
+    "amount": -991.2,
+    "amount_paid": 0,
+    "status": "CreditNote",
+    "notes": "Credit note against INV-1001",
+    "created_by": 22,
+    "created_at": "2026-11-07 09:01:37"
+  }
+]
