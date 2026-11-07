@@ -168,23 +168,67 @@ document.getElementById('sheet').addEventListener('click', (e) => {
   if (e.target.id === 'sheet') closeSheet();
 });
 
+function showLoginOnly() {
+  const login = document.getElementById('loginScreen');
+  const app = document.getElementById('app');
+  if (login) {
+    login.hidden = false;
+    login.classList.add('login-active');
+  }
+  if (app) {
+    app.hidden = true;
+    app.setAttribute('aria-hidden', 'true');
+  }
+  document.body.classList.add('on-login');
+  document.body.classList.remove('in-app');
+}
+
+function showAppOnly() {
+  const login = document.getElementById('loginScreen');
+  const app = document.getElementById('app');
+  if (login) {
+    login.hidden = true;
+    login.classList.remove('login-active');
+  }
+  if (app) {
+    app.hidden = false;
+    app.removeAttribute('aria-hidden');
+  }
+  document.body.classList.add('in-app');
+  document.body.classList.remove('on-login');
+}
+
+function apiOfflineMessage() {
+  const host = location.hostname;
+  const isLocal = host === 'localhost' || host === '127.0.0.1';
+  if (isLocal) {
+    return 'API offline — run npm start and open http://localhost:3000 (not VS Code Live Server).';
+  }
+  if (/vercel\.app$/i.test(host) || /vercel\.app\./i.test(host)) {
+    return 'Vercel cannot run DeepKamal’s SQLite API. Deploy on Render/Railway (see render.yaml), then open that URL.';
+  }
+  return 'API offline — this page is static UI only. Host the full Node server (Render/Railway with npm start).';
+}
+
 async function checkDb() {
   const el = document.getElementById('dbStatus');
+  if (!el) return false;
   try {
-    const res = await fetch('/api/db/status');
-    const data = await res.json();
+    const data = await API.get('/db/status');
     state.dbInfo = data;
     if (data.ok) {
       el.textContent = `SQLite OK · ${data.counts.users} users · ${data.counts.services} services · ${Math.round(data.sizeBytes / 1024)} KB`;
       el.className = 'db-status ok';
-      el.title = data.path;
-    } else {
-      el.textContent = data.error || 'Database error';
-      el.className = 'db-status bad';
+      el.title = data.path || '';
+      return true;
     }
-  } catch {
-    el.textContent = 'API offline — start with: npm run start:clean (must be localhost:3000, not Live Server)';
+    el.textContent = data.error || 'Database error';
     el.className = 'db-status bad';
+    return false;
+  } catch {
+    el.textContent = apiOfflineMessage();
+    el.className = 'db-status bad';
+    return false;
   }
 }
 
@@ -205,8 +249,12 @@ document.querySelectorAll('.quick-login').forEach((btn) => {
     try {
       await doLogin(btn.dataset.email, btn.dataset.pass || PASSWORD);
     } catch (err) {
-      if (errorEl) errorEl.textContent = err.message;
-      else toast(err.message);
+      showLoginOnly();
+      const msg = err.message || 'Login failed';
+      if (errorEl) errorEl.textContent = msg;
+      else toast(msg);
+      checkDb();
+    } finally {
       btn.classList.remove('loading');
     }
   };
@@ -228,6 +276,7 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
 
 function logout() {
   API.clearSession();
+  showLoginOnly();
   location.href = '/';
 }
 
@@ -2041,8 +2090,7 @@ function render() {
 }
 
 async function enterApp() {
-  document.getElementById('loginScreen').hidden = true;
-  document.getElementById('app').hidden = false;
+  showAppOnly();
   state.view = 'home';
   try {
     await Promise.all([loadAll(), checkDb()]);
@@ -2065,7 +2113,14 @@ async function enterApp() {
 }
 
 async function boot() {
-  checkDb();
+  showLoginOnly();
+  const online = await checkDb();
+  if (!online) {
+    API.clearSession();
+    const err = document.getElementById('loginError');
+    if (err && !err.textContent) err.textContent = 'Waiting for API…';
+    return;
+  }
   if (API.token && API.user) {
     try {
       const me = await API.get('/auth/me');
@@ -2076,8 +2131,9 @@ async function boot() {
       API.clearSession();
     }
   }
-  document.getElementById('loginScreen').hidden = false;
-  document.getElementById('app').hidden = true;
+  showLoginOnly();
+  const err = document.getElementById('loginError');
+  if (err) err.textContent = '';
 }
 
 boot();

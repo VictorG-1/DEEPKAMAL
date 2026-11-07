@@ -4,13 +4,13 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.post('/', requireAuth, (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const { rating, comment, recommend, ticketCode, orderId } = req.body || {};
   if (!rating || rating < 1 || rating > 5) {
     return res.status(400).json({ error: 'A star rating from 1 to 5 is required' });
   }
 
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO feedback (ticket_code, order_id, customer_user_id, rating, comment, recommend)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(
@@ -32,8 +32,8 @@ router.post('/', requireAuth, (req, res) => {
   });
 });
 
-router.get('/mine', requireAuth, (req, res) => {
-  const rows = db.prepare(`
+router.get('/mine', requireAuth, async (req, res) => {
+  const rows = await db.prepare(`
     SELECT * FROM feedback WHERE customer_user_id = ? ORDER BY created_at DESC
   `).all(req.user.id);
   const avg = rows.length
@@ -42,14 +42,14 @@ router.get('/mine', requireAuth, (req, res) => {
   res.json({ feedback: rows, average: avg });
 });
 
-router.get('/', requireAuth, requireRoleSafe, (_req, res) => {
-  const rows = db
+router.get('/', requireAuth, requireRoleSafe, async (_req, res) => {
+  const rows = (await db
     .prepare(
       `SELECT f.*, u.name AS customer_name FROM feedback f
        LEFT JOIN users u ON u.id = f.customer_user_id
        ORDER BY f.created_at DESC LIMIT 50`
     )
-    .all()
+    .all())
     .map((f) => ({
       id: f.id,
       rating: f.rating,

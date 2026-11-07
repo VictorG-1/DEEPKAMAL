@@ -43,11 +43,11 @@ const select = `
   LEFT JOIN sites s ON s.id = a.site_id
 `;
 
-router.get('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.get('/', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const due = String(req.query.due || '') === '1';
   let rows;
   if (due) {
-    rows = db
+    rows = await db
       .prepare(
         `${select} WHERE a.status = 'Active' AND (
           date(a.next_service_due) <= date('now', '+30 day')
@@ -57,15 +57,15 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
       )
       .all();
   } else {
-    rows = db.prepare(`${select} ORDER BY a.id DESC`).all();
+    rows = await db.prepare(`${select} ORDER BY a.id DESC`).all();
   }
   res.json({ assets: rows.map(mapAsset), dueSoon: rows.filter((a) => mapAsset(a).overdue).length });
 });
 
-router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const b = req.body || {};
   if (!b.name || !b.assetType) return res.status(400).json({ error: 'name and assetType required' });
-  const result = db
+  const result = await db
     .prepare(
       `INSERT INTO site_assets (
         client_id, site_id, asset_type, name, serial_no, location_note, capacity,
@@ -91,18 +91,19 @@ router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
     );
   const id = result.lastInsertRowid;
   const token = makeQrToken(id);
-  db.prepare(`UPDATE site_assets SET qr_token = ? WHERE id = ?`).run(token, id);
-  db.prepare(
+  await db.prepare(`UPDATE site_assets SET qr_token = ? WHERE id = ?`).run(token, id);
+  await db.prepare(
     `INSERT INTO asset_service_log (asset_id, event_type, notes, performed_by) VALUES (?, 'Registered', ?, ?)`
   ).run(id, `Asset created · ${b.assetType}`, req.user.id);
-  res.status(201).json({ asset: mapAsset(db.prepare(`${select} WHERE a.id = ?`).get(id)) });
+  const created = await db.prepare(`${select} WHERE a.id = ?`).get(id);
+  res.status(201).json({ asset: mapAsset(created) });
 });
 
-router.patch('/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const a = db.prepare('SELECT * FROM site_assets WHERE id = ?').get(req.params.id);
+router.patch('/:id', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const a = await db.prepare('SELECT * FROM site_assets WHERE id = ?').get(req.params.id);
   if (!a) return res.status(404).json({ error: 'Asset not found' });
   const b = req.body || {};
-  db.prepare(
+  await db.prepare(
     `UPDATE site_assets SET
       name = COALESCE(?, name),
       serial_no = COALESCE(?, serial_no),
@@ -127,20 +128,21 @@ router.patch('/:id', requireAuth, requireRole('admin', 'manager'), (req, res) =>
     a.id
   );
   if (b.logNote || b.lastServiceOn) {
-    db.prepare(
+    await db.prepare(
       `INSERT INTO asset_service_log (asset_id, event_type, notes, performed_by) VALUES (?, ?, ?, ?)`
     ).run(a.id, b.eventType || 'Service', b.logNote || 'Service / due dates updated', req.user.id);
   }
-  res.json({ asset: mapAsset(db.prepare(`${select} WHERE a.id = ?`).get(a.id)) });
+  const updated = await db.prepare(`${select} WHERE a.id = ?`).get(a.id);
+  res.json({ asset: mapAsset(updated) });
 });
 
-router.get('/:id/sticker', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const a = db.prepare(`${select} WHERE a.id = ?`).get(req.params.id);
+router.get('/:id/sticker', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const a = await db.prepare(`${select} WHERE a.id = ?`).get(req.params.id);
   if (!a) return res.status(404).json({ error: 'Asset not found' });
   let token = a.qr_token;
   if (!token) {
     token = makeQrToken(a.id);
-    db.prepare(`UPDATE site_assets SET qr_token = ? WHERE id = ?`).run(token, a.id);
+    await db.prepare(`UPDATE site_assets SET qr_token = ? WHERE id = ?`).run(token, a.id);
   }
   const origin = `${req.protocol}://${req.get('host')}`;
   const url = `${origin}/a/${token}`;
@@ -154,16 +156,16 @@ router.get('/:id/sticker', requireAuth, requireRole('admin', 'manager'), (req, r
 });
 
 /** Public scan page data */
-router.get('/public/:token', (req, res) => {
-  const a = db.prepare(`${select} WHERE a.qr_token = ?`).get(req.params.token);
+router.get('/public/:token', async (req, res) => {
+  const a = await db.prepare(`${select} WHERE a.qr_token = ?`).get(req.params.token);
   if (!a) return res.status(404).json({ error: 'Asset not found' });
-  const history = db
+  const history = (await db
     .prepare(
       `SELECT l.*, u.name AS user_name FROM asset_service_log l
        LEFT JOIN users u ON u.id = l.performed_by
        WHERE l.asset_id = ? ORDER BY l.id DESC LIMIT 40`
     )
-    .all(a.id)
+    .all(a.id))
     .map((h) => ({
       id: h.id,
       eventType: h.event_type,

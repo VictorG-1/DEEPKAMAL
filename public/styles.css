@@ -49,12 +49,29 @@ code { background: #eef2f7; padding: 2px 6px; border-radius: 6px; }
 .eyebrow { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .form-error { color: #b91c1c; min-height: 1.2em; margin: 0; font-size: .9rem; }
 
-/* LOGIN */
+/* LOGIN — always above app shell so buttons stay clickable */
 .login {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 1.05fr .95fr;
   background: #0b1f33;
+  position: relative;
+  z-index: 200;
+  isolation: isolate;
+}
+body.on-login #app,
+#app[hidden] {
+  display: none !important;
+  pointer-events: none !important;
+}
+body.on-login #loginScreen,
+#loginScreen.login-active {
+  pointer-events: auto;
+}
+.cred, .login-card button, .login-form input {
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
 }
 .login-hero {
   padding: 48px;

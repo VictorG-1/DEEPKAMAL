@@ -5,11 +5,11 @@ const { moveStock, ensureStockRow, getStock } = require('../lib/inventory');
 
 const router = express.Router();
 
-router.get('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.get('/', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const q = String(req.query.q || '').trim();
   let rows;
   if (q) {
-    rows = db
+    rows = await db
       .prepare(
         `SELECT m.*, COALESCE(s.qty, 0) AS stock_qty
          FROM materials m
@@ -19,7 +19,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
       )
       .all(`%${q}%`, `%${q}%`, `%${q}%`);
   } else {
-    rows = db
+    rows = await db
       .prepare(
         `SELECT m.*, COALESCE(s.qty, 0) AS stock_qty
          FROM materials m
@@ -51,8 +51,8 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   });
 });
 
-router.get('/movements', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const rows = db
+router.get('/movements', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const rows = (await db
     .prepare(
       `SELECT mv.*, m.name AS material_name, m.sku, s.name AS site_name, u.name AS user_name
        FROM inventory_movements mv
@@ -61,7 +61,7 @@ router.get('/movements', requireAuth, requireRole('admin', 'manager'), (req, res
        LEFT JOIN users u ON u.id = mv.user_id
        ORDER BY mv.id DESC LIMIT 100`
     )
-    .all()
+    .all())
     .map((r) => ({
       id: r.id,
       material: r.material_name,
@@ -78,11 +78,11 @@ router.get('/movements', requireAuth, requireRole('admin', 'manager'), (req, res
   res.json({ movements: rows });
 });
 
-router.post('/receive', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/receive', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const { materialId, qty, notes } = req.body || {};
-    ensureStockRow(materialId);
-    const result = moveStock({
+    await ensureStockRow(materialId);
+    const result = await moveStock({
       materialId: Number(materialId),
       qty: Number(qty),
       direction: 'IN',
@@ -96,10 +96,10 @@ router.post('/receive', requireAuth, requireRole('admin', 'manager'), (req, res)
   }
 });
 
-router.post('/issue', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/issue', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const { materialId, qty, siteId, notes } = req.body || {};
-    const result = moveStock({
+    const result = await moveStock({
       materialId: Number(materialId),
       qty: Number(qty),
       direction: 'OUT',
@@ -108,7 +108,7 @@ router.post('/issue', requireAuth, requireRole('admin', 'manager'), (req, res) =
       userId: req.user.id,
       refType: 'issue'
     });
-    res.status(201).json({ ok: true, qty: result.qty, remaining: getStock(Number(materialId)) });
+    res.status(201).json({ ok: true, qty: result.qty, remaining: await getStock(Number(materialId)) });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }

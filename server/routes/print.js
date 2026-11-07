@@ -17,10 +17,10 @@ function money(n) {
   return '₹' + Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function issueToken(entityType, entityId, hours = 72) {
+async function issueToken(entityType, entityId, hours = 72) {
   const token = crypto.randomBytes(16).toString('hex');
   const expires = new Date(Date.now() + hours * 3600 * 1000).toISOString();
-  db.prepare(`INSERT INTO print_tokens (token, entity_type, entity_id, expires_at) VALUES (?, ?, ?, ?)`).run(
+  await db.prepare(`INSERT INTO print_tokens (token, entity_type, entity_id, expires_at) VALUES (?, ?, ?, ?)`).run(
     token,
     entityType,
     entityId,
@@ -29,8 +29,8 @@ function issueToken(entityType, entityId, hours = 72) {
   return token;
 }
 
-function resolveToken(token) {
-  const row = db.prepare(`SELECT * FROM print_tokens WHERE token = ?`).get(token);
+async function resolveToken(token) {
+  const row = await db.prepare(`SELECT * FROM print_tokens WHERE token = ?`).get(token);
   if (!row) return null;
   if (row.expires_at < new Date().toISOString()) return null;
   return row;
@@ -119,7 +119,7 @@ function esc(v) {
     .replace(/"/g, '&quot;');
 }
 
-router.post('/token', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/token', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const { entityType, entityId } = req.body || {};
   if (!['quotation', 'invoice'].includes(entityType) || !entityId) {
     return res.status(400).json({ error: 'entityType and entityId required' });
@@ -131,27 +131,27 @@ router.post('/token', requireAuth, requireRole('admin', 'manager'), (req, res) =
   res.json({ token, url, path, whatsappText: `DeepKamal ${entityType} — open & print/PDF: ${url}` });
 });
 
-router.get('/quote/:token', (req, res) => {
+router.get('/quote/:token', async (req, res) => {
   const tok = resolveToken(req.params.token);
   if (!tok || tok.entity_type !== 'quotation') return res.status(404).send('Link expired or invalid');
-  const q = db
+  const q = await db
     .prepare(
       `SELECT q.*, c.name AS client_name, c.location AS client_location FROM quotations q
        LEFT JOIN clients c ON c.id = q.client_id WHERE q.id = ?`
     )
     .get(tok.entity_id);
   if (!q) return res.status(404).send('Quotation not found');
-  const items = db.prepare(`SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY sort_order, id`).all(q.id);
+  const items = await db.prepare(`SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY sort_order, id`).all(q.id);
   res.type('html').send(quoteHtml(q, items));
 });
 
-router.get('/invoice/:token', (req, res) => {
+router.get('/invoice/:token', async (req, res) => {
   const tok = resolveToken(req.params.token);
   if (!tok || tok.entity_type !== 'invoice') return res.status(404).send('Link expired or invalid');
-  const inv = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(tok.entity_id);
+  const inv = await db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(tok.entity_id);
   if (!inv) return res.status(404).send('Invoice not found');
-  const client = inv.client_id ? db.prepare(`SELECT * FROM clients WHERE id = ?`).get(inv.client_id) : null;
-  const items = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order, id`).all(inv.id);
+  const client = inv.client_id ? await db.prepare(`SELECT * FROM clients WHERE id = ?`).get(inv.client_id) : null;
+  const items = await db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order, id`).all(inv.id);
   res.type('html').send(invoiceHtml(inv, items, client));
 });
 

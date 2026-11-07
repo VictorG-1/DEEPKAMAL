@@ -5,15 +5,15 @@ const { queueNotification } = require('../lib/notify');
 
 const router = express.Router();
 
-function nextTicketCode() {
-  const row = db
+async function nextTicketCode() {
+  const row = await db
     .prepare(`SELECT MAX(CAST(REPLACE(code, 'DK-', '') AS INTEGER)) AS n FROM tickets WHERE code GLOB 'DK-[0-9]*'`)
     .get();
   return `DK-${(row?.n || 2900) + 1}`;
 }
 
-router.get('/visits', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const visits = db
+router.get('/visits', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const visits = (await db
     .prepare(
       `SELECT v.*, c.name AS client_name, s.name AS site_name, t.code AS ticket_code
        FROM amc_visits v
@@ -22,7 +22,7 @@ router.get('/visits', requireAuth, requireRole('admin', 'manager'), (_req, res) 
        LEFT JOIN tickets t ON t.id = v.ticket_id
        ORDER BY v.due_date`
     )
-    .all()
+    .all())
     .map((v) => ({
       id: v.id,
       clientId: v.client_id,
@@ -40,13 +40,13 @@ router.get('/visits', requireAuth, requireRole('admin', 'manager'), (_req, res) 
 });
 
 /** Create / refresh preventive visits for AMC clients expiring or due in 45 days */
-router.post('/generate', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const clients = db
+router.post('/generate', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const clients = await db
     .prepare(
       `SELECT * FROM clients WHERE amc_expires IS NOT NULL AND date(amc_expires) <= date('now', '+45 day')`
     )
     .all();
-  const dueAssets = db
+  const dueAssets = await db
     .prepare(
       `SELECT a.*, c.name AS client_name, c.phone, c.email FROM site_assets a
        LEFT JOIN clients c ON c.id = a.client_id
@@ -58,17 +58,17 @@ router.post('/generate', requireAuth, requireRole('admin', 'manager'), (req, res
     )
     .all();
   let created = 0;
-  const tx = db.transaction(() => {
+  await db.transaction(async () => {
     for (const c of clients) {
-      const site = db.prepare('SELECT id FROM sites WHERE client_id = ? ORDER BY id LIMIT 1').get(c.id);
+      const site = await db.prepare('SELECT id FROM sites WHERE client_id = ? ORDER BY id LIMIT 1').get(c.id);
       const due = c.amc_expires;
-      const exists = db
+      const exists = await db
         .prepare(
           `SELECT id FROM amc_visits WHERE client_id = ? AND due_date = ? AND status IN ('Scheduled','Ticketed')`
         )
         .get(c.id, due);
       if (exists) continue;
-      db.prepare(
+      await db.prepare(
         `INSERT INTO amc_visits (client_id, site_id, title, visit_type, due_date, status, notes)
          VALUES (?, ?, ?, 'Preventive', ?, 'Scheduled', ?)`
       ).run(
@@ -96,13 +96,13 @@ router.post('/generate', requireAuth, requireRole('admin', 'manager'), (req, res
           .filter(Boolean)
           .sort()[0] || new Date().toISOString().slice(0, 10);
       const title = `${a.asset_type} service · ${a.name}`;
-      const exists = db
+      const exists = await db
         .prepare(
           `SELECT id FROM amc_visits WHERE client_id = ? AND title = ? AND due_date = ? AND status IN ('Scheduled','Ticketed')`
         )
         .get(a.client_id, title, due);
       if (exists) continue;
-      db.prepare(
+      await db.prepare(
         `INSERT INTO amc_visits (client_id, site_id, title, visit_type, due_date, status, notes)
          VALUES (?, ?, ?, 'Asset', ?, 'Scheduled', ?)`
       ).run(
@@ -115,25 +115,24 @@ router.post('/generate', requireAuth, requireRole('admin', 'manager'), (req, res
       created += 1;
     }
   });
-  tx();
   res.json({ ok: true, created });
 });
 
 /** Turn scheduled visits into Unassigned tickets */
-router.post('/visits/:id/ticket', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const v = db.prepare('SELECT * FROM amc_visits WHERE id = ?').get(req.params.id);
+router.post('/visits/:id/ticket', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const v = await db.prepare('SELECT * FROM amc_visits WHERE id = ?').get(req.params.id);
   if (!v) return res.status(404).json({ error: 'Visit not found' });
   if (v.ticket_id) return res.json({ ok: true, ticketId: v.ticket_id, already: true });
 
-  const code = nextTicketCode();
-  const ticketId = db
+  const code = await nextTicketCode();
+  const ticketId = (await db
     .prepare(
       `INSERT INTO tickets (code, title, description, client_id, site_id, priority, status, created_by, updated_at)
        VALUES (?, ?, ?, ?, ?, 'High', 'Unassigned', ?, datetime('now'))`
     )
-    .run(code, v.title, v.notes || 'AMC preventive visit', v.client_id, v.site_id, req.user.id).lastInsertRowid;
+    .run(code, v.title, v.notes || 'AMC preventive visit', v.client_id, v.site_id, req.user.id)).lastInsertRowid;
 
-  db.prepare(`UPDATE amc_visits SET status = 'Ticketed', ticket_id = ? WHERE id = ?`).run(ticketId, v.id);
+  await db.prepare(`UPDATE amc_visits SET status = 'Ticketed', ticket_id = ? WHERE id = ?`).run(ticketId, v.id);
   res.status(201).json({ ok: true, ticketId, ticketCode: code });
 });
 

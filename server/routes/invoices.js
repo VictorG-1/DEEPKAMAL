@@ -5,13 +5,13 @@ const { queueNotification } = require('../lib/notify');
 
 const router = express.Router();
 
-function nextInvoiceCode(prefix = 'INV') {
-  const row = db.prepare(`SELECT code FROM invoices WHERE code LIKE ? ORDER BY id DESC LIMIT 1`).get(`${prefix}-%`);
+async function nextInvoiceCode(prefix = 'INV') {
+  const row = await db.prepare(`SELECT code FROM invoices WHERE code LIKE ? ORDER BY id DESC LIMIT 1`).get(`${prefix}-%`);
   const n = row ? parseInt(String(row.code).replace(/\D/g, ''), 10) + 1 : 1001;
   return `${prefix}-${n}`;
 }
 
-function mapInvoice(inv, withItems = false) {
+async function mapInvoice(inv, withItems = false) {
   const balance = Math.round(Math.max(0, Number(inv.amount) - Number(inv.amount_paid || 0)) * 100) / 100;
   const base = {
     id: inv.id,
@@ -35,9 +35,9 @@ function mapInvoice(inv, withItems = false) {
       : 0
   };
   if (withItems) {
-    base.items = db
+    base.items = (await db
       .prepare(`SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order, id`)
-      .all(inv.id)
+      .all(inv.id))
       .map((i) => ({
         id: i.id,
         description: i.description,
@@ -59,38 +59,38 @@ const select = `
   LEFT JOIN clients c ON c.id = i.client_id
 `;
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   let rows;
   if (req.user.role === 'customer') {
-    const user = db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
-    rows = db.prepare(`${select} WHERE i.client_id = ? ORDER BY i.id DESC`).all(user?.client_id || -1);
+    const user = await db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
+    rows = await db.prepare(`${select} WHERE i.client_id = ? ORDER BY i.id DESC`).all(user?.client_id || -1);
   } else {
-    rows = db.prepare(`${select} ORDER BY i.id DESC`).all();
+    rows = await db.prepare(`${select} ORDER BY i.id DESC`).all();
   }
-  const invoices = rows.map((r) => mapInvoice(r));
+  const invoices = await Promise.all(rows.map((r) => mapInvoice(r)));
   const receivables = invoices
     .filter((i) => ['Unpaid', 'Partial'].includes(i.status))
     .reduce((s, i) => s + i.balance, 0);
   res.json({ invoices, receivables: Math.round(receivables * 100) / 100 });
 });
 
-router.get('/:id', requireAuth, (req, res) => {
-  const inv = db.prepare(`${select} WHERE i.id = ?`).get(req.params.id);
+router.get('/:id', requireAuth, async (req, res) => {
+  const inv = await db.prepare(`${select} WHERE i.id = ?`).get(req.params.id);
   if (!inv) return res.status(404).json({ error: 'Invoice not found' });
-  res.json({ invoice: mapInvoice(inv, true) });
+  res.json({ invoice: await mapInvoice(inv, true) });
 });
 
-router.post('/from-quotation/:quoteId', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const quote = db.prepare('SELECT * FROM quotations WHERE id = ?').get(req.params.quoteId);
+router.post('/from-quotation/:quoteId', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const quote = await db.prepare('SELECT * FROM quotations WHERE id = ?').get(req.params.quoteId);
   if (!quote) return res.status(404).json({ error: 'Quotation not found' });
-  const items = db.prepare('SELECT * FROM quotation_items WHERE quotation_id = ?').all(quote.id);
-  const code = nextInvoiceCode('INV');
+  const items = await db.prepare('SELECT * FROM quotation_items WHERE quotation_id = ?').all(quote.id);
+  const code = await nextInvoiceCode('INV');
   const today = new Date().toISOString().slice(0, 10);
   const due = new Date();
   due.setDate(due.getDate() + 15);
 
-  const id = db.transaction(() => {
-    const result = db
+  const id = await db.transaction(async () => {
+    const result = await db
       .prepare(
         `INSERT INTO invoices (code, client_id, quotation_id, invoice_date, due_date, subtotal, tax_amount, amount, amount_paid, status, notes, created_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -118,14 +118,15 @@ router.post('/from-quotation/:quoteId', requireAuth, requireRole('admin', 'manag
       `INSERT INTO invoice_items (invoice_id, description, hsn, qty, unit, rate, gst_pct, tax_amount, amount, sort_order)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    items.forEach((it, idx) => {
-      ins.run(invId, it.description, it.hsn, it.qty, it.unit, it.rate, it.gst_pct, it.tax_amount, it.amount, idx);
-    });
+    for (let idx = 0; idx < items.length; idx++) {
+      const it = items[idx];
+      await ins.run(invId, it.description, it.hsn, it.qty, it.unit, it.rate, it.gst_pct, it.tax_amount, it.amount, idx);
+    }
     return invId;
-  })();
+  });
 
-  const inv = db.prepare(`${select} WHERE i.id = ?`).get(id);
-  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(quote.client_id);
+  const inv = await db.prepare(`${select} WHERE i.id = ?`).get(id);
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(quote.client_id);
   if (client?.phone || client?.email) {
     queueNotification({
       channel: client.phone ? 'whatsapp' : 'email',
@@ -136,15 +137,15 @@ router.post('/from-quotation/:quoteId', requireAuth, requireRole('admin', 'manag
       entityId: id
     });
   }
-  res.status(201).json({ invoice: mapInvoice(inv, true) });
+  res.status(201).json({ invoice: await mapInvoice(inv, true) });
 });
 
-router.post('/:id/credit-note', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id);
+router.post('/:id/credit-note', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const inv = await db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id);
   if (!inv) return res.status(404).json({ error: 'Invoice not found' });
   const amount = Number(req.body?.amount != null ? req.body.amount : inv.amount);
-  const code = nextInvoiceCode('CN');
-  const result = db
+  const code = await nextInvoiceCode('CN');
+  const result = await db
     .prepare(
       `INSERT INTO invoices (code, client_id, quotation_id, invoice_date, due_date, subtotal, tax_amount, amount, amount_paid, status, notes, created_by)
        VALUES (?, ?, ?, date('now'), date('now'), ?, ?, ?, ?, 'CreditNote', ?, ?)`
@@ -160,26 +161,27 @@ router.post('/:id/credit-note', requireAuth, requireRole('admin', 'manager'), (r
       `Credit note against ${inv.code}`,
       req.user.id
     );
-  db.prepare(
+  await db.prepare(
     `INSERT INTO invoice_items (invoice_id, description, qty, unit, rate, amount, sort_order)
      VALUES (?, ?, 1, 'Lot', ?, ?, 0)`
   ).run(result.lastInsertRowid, `Credit against ${inv.code}`, -Math.abs(amount), -Math.abs(amount));
-  res.status(201).json({ invoice: mapInvoice(db.prepare(`${select} WHERE i.id = ?`).get(result.lastInsertRowid), true) });
+  const created = await db.prepare(`${select} WHERE i.id = ?`).get(result.lastInsertRowid);
+  res.status(201).json({ invoice: await mapInvoice(created, true) });
 });
 
-router.post('/:id/pay', requireAuth, requireRole('admin', 'manager', 'customer'), (req, res) => {
-  const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id);
+router.post('/:id/pay', requireAuth, requireRole('admin', 'manager', 'customer'), async (req, res) => {
+  const inv = await db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id);
   if (!inv) return res.status(404).json({ error: 'Invoice not found' });
   if (req.user.role === 'customer') {
-    const user = db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
+    const user = await db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
     if (inv.client_id !== user?.client_id) return res.status(403).json({ error: 'Not allowed' });
   }
   const amount = Number(req.body?.amount);
   if (!(amount > 0)) return res.status(400).json({ error: 'amount required' });
   const paid = Math.round((Number(inv.amount_paid || 0) + amount) * 100) / 100;
   const status = paid >= Number(inv.amount) ? 'Paid' : 'Partial';
-  db.prepare(`UPDATE invoices SET amount_paid = ?, status = ? WHERE id = ?`).run(paid, status, inv.id);
-  db.prepare(
+  await db.prepare(`UPDATE invoices SET amount_paid = ?, status = ? WHERE id = ?`).run(paid, status, inv.id);
+  await db.prepare(
     `INSERT INTO payments (entity_type, entity_id, amount, method, status, reference, created_by)
      VALUES ('invoice', ?, ?, ?, 'Paid', ?, ?)`
   ).run(inv.id, amount, req.body?.method || 'UPI', req.body?.reference || null, req.user.id);

@@ -15,34 +15,34 @@ function monthKey(day) {
   return String(day).slice(0, 7);
 }
 
-function recalcWageBalance(userId, month = monthKey(new Date().toISOString().slice(0, 10))) {
-  const user = db.prepare('SELECT id, daily_wage FROM users WHERE id = ?').get(userId);
+async function recalcWageBalance(userId, month = monthKey(new Date().toISOString().slice(0, 10))) {
+  const user = await db.prepare('SELECT id, daily_wage FROM users WHERE id = ?').get(userId);
   if (!user) return 0;
-  const days = db
+  const days = await db
     .prepare(`SELECT status FROM attendance WHERE user_id = ? AND strftime('%Y-%m', date) = ?`)
     .all(userId, month);
   let earned = 0;
   for (const d of days) earned += creditFor(d.status, user.daily_wage);
-  const claimed = db
+  const claimed = (await db
     .prepare(
       `SELECT COALESCE(SUM(amount), 0) AS s FROM salary_claims
        WHERE user_id = ? AND status IN ('Pending','Approved','Paid')
          AND strftime('%Y-%m', created_at) = ?`
     )
-    .get(userId, month).s;
+    .get(userId, month)).s;
   const balance = Math.max(0, Math.round((earned - Number(claimed)) * 100) / 100);
-  db.prepare(`UPDATE users SET wage_balance = ? WHERE id = ?`).run(balance, userId);
+  await db.prepare(`UPDATE users SET wage_balance = ? WHERE id = ?`).run(balance, userId);
   return balance;
 }
 
-function upsertAttendance(userId, status, day, { siteId = null, latitude = null, longitude = null, accuracy = null } = {}) {
-  const user = db.prepare('SELECT id, daily_wage FROM users WHERE id = ?').get(userId);
+async function upsertAttendance(userId, status, day, { siteId = null, latitude = null, longitude = null, accuracy = null } = {}) {
+  const user = await db.prepare('SELECT id, daily_wage FROM users WHERE id = ?').get(userId);
   if (!user) return;
 
   const checkIn =
     latitude != null && longitude != null ? new Date().toISOString() : null;
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO attendance (user_id, date, status, site_id, latitude, longitude, check_in_at, geo_accuracy)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, date) DO UPDATE SET
@@ -55,21 +55,21 @@ function upsertAttendance(userId, status, day, { siteId = null, latitude = null,
   `).run(userId, day, status, siteId, latitude, longitude, checkIn, accuracy);
 
   if (latitude != null && longitude != null) {
-    db.prepare(`UPDATE users SET home_lat = ?, home_lng = ? WHERE id = ?`).run(latitude, longitude, userId);
+    await db.prepare(`UPDATE users SET home_lat = ?, home_lng = ? WHERE id = ?`).run(latitude, longitude, userId);
   }
 
-  recalcWageBalance(userId, monthKey(day));
+  await recalcWageBalance(userId, monthKey(day));
 
   if (status === 'Present' || status === 'Half day') {
-    db.prepare(`UPDATE users SET availability = 'On site' WHERE id = ?`).run(userId);
+    await db.prepare(`UPDATE users SET availability = 'On site' WHERE id = ?`).run(userId);
   } else if (status === 'Absent') {
-    db.prepare(`UPDATE users SET availability = 'Available' WHERE id = ? AND availability = 'On site'`).run(userId);
+    await db.prepare(`UPDATE users SET availability = 'Available' WHERE id = ? AND availability = 'On site'`).run(userId);
   }
 }
 
-router.get('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req, res) => {
+router.get('/', requireAuth, requireRole('admin', 'manager', 'resource'), async (req, res) => {
   const month = req.query.month || new Date().toISOString().slice(0, 7);
-  let resources = db
+  let resources = await db
     .prepare(
       `SELECT id, name, initials, avatar_color, job_title, daily_wage, wage_balance, claims_this_month
        FROM users WHERE role = 'resource' ORDER BY name`
@@ -80,8 +80,8 @@ router.get('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req, 
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const rows = resources.map((r) => {
-    const days = db
+  const rows = await Promise.all(resources.map(async (r) => {
+    const days = await db
       .prepare(`SELECT status FROM attendance WHERE user_id = ? AND strftime('%Y-%m', date) = ?`)
       .all(r.id, month);
 
@@ -91,7 +91,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req, 
       if (d.status === 'Half day') presentDays += 0.5;
     }
 
-    const todayRow = db.prepare('SELECT * FROM attendance WHERE user_id = ? AND date = ?').get(r.id, today);
+    const todayRow = await db.prepare('SELECT * FROM attendance WHERE user_id = ? AND date = ?').get(r.id, today);
     return {
       id: r.id,
       name: r.name,
@@ -114,7 +114,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req, 
             }
           : null
     };
-  });
+  }));
 
   const payrollTotal = rows.reduce((sum, r) => sum + r.payable, 0);
   const wagePool = rows.reduce((sum, r) => sum + Number(r.wageBalance || 0), 0);
@@ -130,7 +130,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req, 
   });
 });
 
-router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req, res) => {
+router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), async (req, res) => {
   const { userId, status, siteId, date, markAll, latitude, longitude, accuracy } = req.body || {};
   const day = date || new Date().toISOString().slice(0, 10);
 
@@ -139,10 +139,10 @@ router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req,
   }
 
   if (markAll && ['admin', 'manager'].includes(req.user.role)) {
-    const team = db.prepare(`SELECT id FROM users WHERE role = 'resource'`).all();
-    db.transaction(() => {
-      for (const u of team) upsertAttendance(u.id, status, day, { siteId: siteId || null });
-    })();
+    const team = await db.prepare(`SELECT id FROM users WHERE role = 'resource'`).all();
+    await db.transaction(async () => {
+      for (const u of team) await upsertAttendance(u.id, status, day, { siteId: siteId || null });
+    });
     return res.status(201).json({ ok: true, date: day, marked: team.length, status, markAll: true });
   }
 
@@ -160,14 +160,14 @@ router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req,
     });
   }
 
-  upsertAttendance(targetId, status, day, {
+  await upsertAttendance(targetId, status, day, {
     siteId: siteId || null,
     latitude: latitude != null ? Number(latitude) : null,
     longitude: longitude != null ? Number(longitude) : null,
     accuracy: accuracy != null ? Number(accuracy) : null
   });
   const wageBalance = recalcWageBalance(targetId, monthKey(day));
-  const row = db.prepare('SELECT * FROM attendance WHERE user_id = ? AND date = ?').get(targetId, day);
+  const row = await db.prepare('SELECT * FROM attendance WHERE user_id = ? AND date = ?').get(targetId, day);
   res.status(201).json({
     ok: true,
     date: day,
@@ -181,8 +181,8 @@ router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), (req,
   });
 });
 
-router.post('/claim', requireAuth, requireRole('resource'), (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+router.post('/claim', requireAuth, requireRole('resource'), async (req, res) => {
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   const wageBalance = recalcWageBalance(user.id);
   if (user.claims_this_month >= 3) {
     return res.status(400).json({ error: 'You have reached the maximum of 3 salary claims this month.' });
@@ -192,8 +192,8 @@ router.post('/claim', requireAuth, requireRole('resource'), (req, res) => {
   }
 
   const amount = wageBalance;
-  db.prepare(`INSERT INTO salary_claims (user_id, amount, status) VALUES (?, ?, 'Pending')`).run(user.id, amount);
-  db.prepare(`UPDATE users SET claims_this_month = claims_this_month + 1, wage_balance = 0 WHERE id = ?`).run(user.id);
+  await db.prepare(`INSERT INTO salary_claims (user_id, amount, status) VALUES (?, ?, 'Pending')`).run(user.id, amount);
+  await db.prepare(`UPDATE users SET claims_this_month = claims_this_month + 1, wage_balance = 0 WHERE id = ?`).run(user.id);
 
   res.status(201).json({
     ok: true,

@@ -4,8 +4,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const claims = db
+router.get('/', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const claims = (await db
     .prepare(
       `SELECT c.*, u.name AS user_name, u.initials, u.avatar_color
        FROM salary_claims c
@@ -13,7 +13,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
        WHERE c.status IN ('Pending','Approved')
        ORDER BY CASE c.status WHEN 'Pending' THEN 0 ELSE 1 END, c.created_at DESC`
     )
-    .all()
+    .all())
     .map((c) => ({
       id: c.id,
       type: 'claim',
@@ -25,7 +25,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
       createdAt: c.created_at
     }));
 
-  const evidence = db
+  const evidence = (await db
     .prepare(
       `SELECT e.*, u.name AS user_name
        FROM work_evidence e
@@ -33,7 +33,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
        ORDER BY e.created_at DESC
        LIMIT 15`
     )
-    .all()
+    .all())
     .map((e) => ({
       id: e.id,
       type: 'evidence',
@@ -47,14 +47,14 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
       createdAt: e.created_at
     }));
 
-  const amcSoon = db
+  const amcSoon = (await db
     .prepare(
       `SELECT id, name, location, amc_status, amc_expires FROM clients
        WHERE amc_expires IS NOT NULL
          AND date(amc_expires) <= date('now', '+30 day')
        ORDER BY amc_expires`
     )
-    .all()
+    .all())
     .map((c) => ({
       id: c.id,
       type: 'amc',
@@ -72,8 +72,8 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
   });
 });
 
-router.post('/claims/:id/decide', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const claim = db.prepare('SELECT * FROM salary_claims WHERE id = ?').get(req.params.id);
+router.post('/claims/:id/decide', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const claim = await db.prepare('SELECT * FROM salary_claims WHERE id = ?').get(req.params.id);
   if (!claim) return res.status(404).json({ error: 'Claim not found' });
 
   const action = String(req.body?.decision || 'approve').toLowerCase();
@@ -82,8 +82,8 @@ router.post('/claims/:id/decide', requireAuth, requireRole('admin', 'manager'), 
     if (claim.status !== 'Approved') {
       return res.status(400).json({ error: 'Approve the claim before marking Paid' });
     }
-    db.prepare(`UPDATE salary_claims SET status = 'Paid' WHERE id = ?`).run(claim.id);
-    db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'claim', ?)`)
+    await db.prepare(`UPDATE salary_claims SET status = 'Paid' WHERE id = ?`).run(claim.id);
+    await db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'claim', ?)`)
       .run(req.user.id, `${req.user.name} paid salary claim #${claim.id} (₹${claim.amount})`, claim.id);
     return res.json({ ok: true, status: 'Paid' });
   }
@@ -93,10 +93,10 @@ router.post('/claims/:id/decide', requireAuth, requireRole('admin', 'manager'), 
   }
 
   const decision = action === 'reject' ? 'Rejected' : 'Approved';
-  db.prepare('UPDATE salary_claims SET status = ? WHERE id = ?').run(decision, claim.id);
+  await db.prepare('UPDATE salary_claims SET status = ? WHERE id = ?').run(decision, claim.id);
 
   if (decision === 'Rejected') {
-    db.prepare(`
+    await db.prepare(`
       UPDATE users SET
         wage_balance = wage_balance + ?,
         claims_this_month = CASE WHEN claims_this_month > 0 THEN claims_this_month - 1 ELSE 0 END
@@ -104,7 +104,7 @@ router.post('/claims/:id/decide', requireAuth, requireRole('admin', 'manager'), 
     `).run(claim.amount, claim.user_id);
   }
 
-  db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'claim', ?)`)
+  await db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'claim', ?)`)
     .run(req.user.id, `${req.user.name} ${decision.toLowerCase()} salary claim #${claim.id}`, claim.id);
 
   res.json({ ok: true, status: decision });

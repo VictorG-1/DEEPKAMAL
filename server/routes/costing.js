@@ -4,15 +4,15 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-function computeForTicket(ticketId) {
-  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
+async function computeForTicket(ticketId) {
+  const ticket = await db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
   if (!ticket) return null;
   const quote = ticket.quotation_id
-    ? db.prepare('SELECT * FROM quotations WHERE id = ?').get(ticket.quotation_id)
+    ? await db.prepare('SELECT * FROM quotations WHERE id = ?').get(ticket.quotation_id)
     : null;
   const quoted = Number(quote?.amount || 0);
 
-  const materialCost = db
+  const materialCost = (await db
     .prepare(
       `SELECT COALESCE(SUM(mv.qty * m.rate), 0) AS c
        FROM inventory_movements mv
@@ -22,17 +22,17 @@ function computeForTicket(ticketId) {
          OR (mv.ref_type = 'ticket' AND mv.ref_id = ?)
        )`
     )
-    .get(ticket.quotation_id || -1, ticketId).c;
+    .get(ticket.quotation_id || -1, ticketId)).c;
 
   const labourDays = ticket.assigned_user_id
-    ? db
+    ? await db
         .prepare(
           `SELECT status FROM attendance WHERE user_id = ? AND date >= date(?, '-7 day') AND date <= date('now')`
         )
         .all(ticket.assigned_user_id, ticket.created_at || new Date().toISOString().slice(0, 10))
     : [];
   const wage = ticket.assigned_user_id
-    ? db.prepare('SELECT daily_wage FROM users WHERE id = ?').get(ticket.assigned_user_id)?.daily_wage || 0
+    ? (await db.prepare('SELECT daily_wage FROM users WHERE id = ?').get(ticket.assigned_user_id))?.daily_wage || 0
     : 0;
   let labourCost = 0;
   for (const d of labourDays) {
@@ -43,7 +43,7 @@ function computeForTicket(ticketId) {
   const actual = Number(materialCost) + Number(labourCost);
   const margin = quoted - actual;
 
-  db.prepare(
+  await db.prepare(
     `INSERT INTO job_costs (ticket_id, quotation_id, quoted_amount, material_cost, labour_cost, other_cost, actual_total, margin, updated_at)
      VALUES (?, ?, ?, ?, ?, 0, ?, ?, datetime('now'))
      ON CONFLICT(ticket_id) DO UPDATE SET
@@ -70,18 +70,18 @@ function computeForTicket(ticketId) {
 }
 
 // Ensure unique ticket_id for upsert — add table fix if needed
-router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const tickets = db
+router.get('/', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const tickets = await db
     .prepare(
       `SELECT id FROM tickets WHERE status IN ('Resolved','Closed','In progress','On the way','Assigned') ORDER BY id DESC LIMIT 40`
     )
     .all();
-  const rows = tickets.map((t) => computeForTicket(t.id)).filter(Boolean);
+  const rows = (await Promise.all(tickets.map((t) => computeForTicket(t.id)))).filter(Boolean);
   res.json({ costs: rows });
 });
 
-router.get('/:ticketId', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const row = computeForTicket(Number(req.params.ticketId));
+router.get('/:ticketId', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const row = await computeForTicket(Number(req.params.ticketId));
   if (!row) return res.status(404).json({ error: 'Ticket not found' });
   res.json({ cost: row });
 });

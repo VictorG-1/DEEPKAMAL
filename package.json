@@ -7,6 +7,8 @@
     "start": "node scripts/run-server.js",
     "dev": "node scripts/run-server.js --watch",
     "start:clean": "node scripts/run-server.js",
+    "start:prod": "node server/index.js",
+    "vercel-build": "echo DeepKamal serverless ready",
     "seed": "node server/seed.js",
     "purge-dummy": "node scripts/purge-dummy.js",
     "reset-db": "node scripts/reset-db.js",
@@ -21,11 +23,15 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.7.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.23.1"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.7.0"
   }
 }

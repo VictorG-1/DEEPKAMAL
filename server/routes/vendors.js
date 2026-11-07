@@ -5,16 +5,16 @@ const { moveStock } = require('../lib/inventory');
 
 const router = express.Router();
 
-function nextPoCode() {
-  const row = db.prepare(`SELECT code FROM purchase_orders ORDER BY id DESC LIMIT 1`).get();
+async function nextPoCode() {
+  const row = await db.prepare(`SELECT code FROM purchase_orders ORDER BY id DESC LIMIT 1`).get();
   const n = row ? parseInt(String(row.code).replace(/\D/g, ''), 10) + 1 : 5001;
   return `PO-${n}`;
 }
 
-router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const vendors = db
+router.get('/', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const vendors = (await db
     .prepare('SELECT * FROM vendors ORDER BY name')
-    .all()
+    .all())
     .map((v) => ({
       id: v.id,
       name: v.name,
@@ -26,24 +26,25 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
   res.json({ vendors });
 });
 
-router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const { name, phone, email, gstin, address } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
-  const result = db
+  const result = await db
     .prepare(`INSERT INTO vendors (name, phone, email, gstin, address) VALUES (?, ?, ?, ?, ?)`)
     .run(name, phone || null, email || null, gstin || null, address || null);
   res.status(201).json({ vendor: { id: result.lastInsertRowid, name, phone, email, gstin, address } });
 });
 
-router.get('/orders', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const orders = db
+router.get('/orders', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const poRows = await db
     .prepare(
       `SELECT p.*, v.name AS vendor_name FROM purchase_orders p
        LEFT JOIN vendors v ON v.id = p.vendor_id
        ORDER BY p.id DESC`
     )
-    .all()
-    .map((p) => ({
+    .all();
+  const orders = await Promise.all(
+    poRows.map(async (p) => ({
       id: p.id,
       code: p.code,
       vendor: p.vendor_name,
@@ -52,31 +53,29 @@ router.get('/orders', requireAuth, requireRole('admin', 'manager'), (_req, res) 
       total: p.total,
       notes: p.notes,
       createdAt: p.created_at,
-      items: db
-        .prepare(`SELECT * FROM purchase_order_items WHERE po_id = ?`)
-        .all(p.id)
-        .map((i) => ({
-          id: i.id,
-          materialId: i.material_id,
-          description: i.description,
-          qty: i.qty,
-          receivedQty: i.received_qty,
-          rate: i.rate,
-          amount: i.amount
-        }))
-    }));
+      items: (await db.prepare(`SELECT * FROM purchase_order_items WHERE po_id = ?`).all(p.id)).map((i) => ({
+        id: i.id,
+        materialId: i.material_id,
+        description: i.description,
+        qty: i.qty,
+        receivedQty: i.received_qty,
+        rate: i.rate,
+        amount: i.amount
+      }))
+    }))
+  );
   res.json({ orders });
 });
 
-router.post('/orders', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/orders', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const { vendorId, notes, items } = req.body || {};
   if (!vendorId || !Array.isArray(items) || !items.length) {
     return res.status(400).json({ error: 'vendorId and items required' });
   }
-  const code = nextPoCode();
+  const code = await nextPoCode();
   const total = items.reduce((s, i) => s + Number(i.qty) * Number(i.rate || 0), 0);
-  const poId = db.transaction(() => {
-    const result = db
+  const poId = await db.transaction(async () => {
+    const result = await db
       .prepare(
         `INSERT INTO purchase_orders (code, vendor_id, status, notes, total, created_by)
          VALUES (?, ?, 'Open', ?, ?, ?)`
@@ -88,19 +87,19 @@ router.post('/orders', requireAuth, requireRole('admin', 'manager'), (req, res) 
        VALUES (?, ?, ?, ?, ?, ?)`
     );
     for (const it of items) {
-      const mat = it.materialId ? db.prepare('SELECT * FROM materials WHERE id = ?').get(it.materialId) : null;
+      const mat = it.materialId ? await db.prepare('SELECT * FROM materials WHERE id = ?').get(it.materialId) : null;
       const qty = Number(it.qty);
       const rate = Number(it.rate != null ? it.rate : mat?.rate || 0);
-      ins.run(id, mat?.id || null, it.description || mat?.name || 'Item', qty, rate, qty * rate);
+      await ins.run(id, mat?.id || null, it.description || mat?.name || 'Item', qty, rate, qty * rate);
     }
     return id;
-  })();
+  });
   res.status(201).json({ ok: true, id: poId, code });
 });
 
 /** GRN — receive against PO line */
-router.post('/orders/:id/receive', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const po = db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(req.params.id);
+router.post('/orders/:id/receive', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const po = await db.prepare('SELECT * FROM purchase_orders WHERE id = ?').get(req.params.id);
   if (!po) return res.status(404).json({ error: 'PO not found' });
   const lines = req.body?.items;
   if (!Array.isArray(lines) || !lines.length) {
@@ -108,9 +107,9 @@ router.post('/orders/:id/receive', requireAuth, requireRole('admin', 'manager'),
   }
 
   try {
-    db.transaction(() => {
+    await db.transaction(async () => {
       for (const line of lines) {
-        const item = db.prepare('SELECT * FROM purchase_order_items WHERE id = ? AND po_id = ?').get(line.id, po.id);
+        const item = await db.prepare('SELECT * FROM purchase_order_items WHERE id = ? AND po_id = ?').get(line.id, po.id);
         if (!item) throw Object.assign(new Error(`PO line ${line.id} not found`), { status: 400 });
         const qty = Number(line.qty);
         if (!(qty > 0)) continue;
@@ -118,9 +117,9 @@ router.post('/orders/:id/receive', requireAuth, requireRole('admin', 'manager'),
         if (received > Number(item.qty) + 0.0001) {
           throw Object.assign(new Error(`Over-receive on ${item.description}`), { status: 400 });
         }
-        db.prepare(`UPDATE purchase_order_items SET received_qty = ? WHERE id = ?`).run(received, item.id);
+        await db.prepare(`UPDATE purchase_order_items SET received_qty = ? WHERE id = ?`).run(received, item.id);
         if (item.material_id) {
-          moveStock({
+          await moveStock({
             materialId: item.material_id,
             qty,
             direction: 'IN',
@@ -131,20 +130,20 @@ router.post('/orders/:id/receive', requireAuth, requireRole('admin', 'manager'),
           });
         }
       }
-      const open = db
+      const open = (await db
         .prepare(`SELECT COUNT(*) AS c FROM purchase_order_items WHERE po_id = ? AND received_qty < qty`)
-        .get(po.id).c;
-      db.prepare(`UPDATE purchase_orders SET status = ? WHERE id = ?`).run(open ? 'Partial' : 'Received', po.id);
-    })();
-    res.json({ ok: true, status: db.prepare('SELECT status FROM purchase_orders WHERE id = ?').get(po.id).status });
+        .get(po.id)).c;
+      await db.prepare(`UPDATE purchase_orders SET status = ? WHERE id = ?`).run(open ? 'Partial' : 'Received', po.id);
+    });
+    res.json({ ok: true, status: (await db.prepare('SELECT status FROM purchase_orders WHERE id = ?').get(po.id)).status });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
 });
 
 /** Suggest POs for below-reorder materials */
-router.get('/reorder-suggestions', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const rows = db
+router.get('/reorder-suggestions', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const rows = (await db
     .prepare(
       `SELECT m.id, m.sku, m.name, m.unit, m.rate, m.reorder_level,
               COALESCE(s.qty, 0) AS qty
@@ -154,7 +153,7 @@ router.get('/reorder-suggestions', requireAuth, requireRole('admin', 'manager'),
        ORDER BY (COALESCE(m.reorder_level, 50) - COALESCE(s.qty, 0)) DESC
        LIMIT 40`
     )
-    .all()
+    .all())
     .map((r) => ({
       materialId: r.id,
       sku: r.sku,

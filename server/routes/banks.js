@@ -4,8 +4,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', requireAuth, requireRole('admin'), (_req, res) => {
-  const accounts = db.prepare('SELECT * FROM bank_accounts ORDER BY id').all().map((b) => ({
+router.get('/', requireAuth, requireRole('admin'), async (_req, res) => {
+  const accounts = (await db.prepare('SELECT * FROM bank_accounts ORDER BY id').all()).map((b) => ({
     id: b.id,
     bank: b.bank_name,
     type: b.account_type,
@@ -15,8 +15,8 @@ router.get('/', requireAuth, requireRole('admin'), (_req, res) => {
   res.json({ accounts, max: 10 });
 });
 
-router.post('/', requireAuth, requireRole('admin'), (req, res) => {
-  const count = db.prepare('SELECT COUNT(*) AS c FROM bank_accounts').get().c;
+router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
+  const count = (await db.prepare('SELECT COUNT(*) AS c FROM bank_accounts').get()).c;
   if (count >= 10) {
     return res.status(400).json({ error: 'You can configure a maximum of 10 receiving bank accounts.' });
   }
@@ -24,11 +24,11 @@ router.post('/', requireAuth, requireRole('admin'), (req, res) => {
   if (!bank || !suffix) {
     return res.status(400).json({ error: 'bank and suffix are required' });
   }
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO bank_accounts (bank_name, account_type, suffix, active)
     VALUES (?, ?, ?, 0)
   `).run(bank, type || 'Current account', String(suffix).slice(-4));
-  const account = db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(result.lastInsertRowid);
+  const account = await db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json({
     account: {
       id: account.id,
@@ -40,17 +40,16 @@ router.post('/', requireAuth, requireRole('admin'), (req, res) => {
   });
 });
 
-router.post('/:id/activate', requireAuth, requireRole('admin'), (req, res) => {
-  const account = db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(req.params.id);
+router.post('/:id/activate', requireAuth, requireRole('admin'), async (req, res) => {
+  const account = await db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(req.params.id);
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
-  const tx = db.transaction(() => {
-    db.prepare('UPDATE bank_accounts SET active = 0').run();
-    db.prepare('UPDATE bank_accounts SET active = 1 WHERE id = ?').run(account.id);
+  await db.transaction(async () => {
+    await db.prepare('UPDATE bank_accounts SET active = 0').run();
+    await db.prepare('UPDATE bank_accounts SET active = 1 WHERE id = ?').run(account.id);
   });
-  tx();
 
-  const accounts = db.prepare('SELECT * FROM bank_accounts ORDER BY id').all().map((b) => ({
+  const accounts = (await db.prepare('SELECT * FROM bank_accounts ORDER BY id').all()).map((b) => ({
     id: b.id,
     bank: b.bank_name,
     type: b.account_type,

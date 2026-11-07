@@ -1,0 +1,20 @@
+# Deploy full DeepKamal (UI + Express + SQLite) on Render — not Vercel.
+# https://dashboard.render.com/select-repo
+services:
+  - type: web
+    name: deepkamal
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    disk:
+      name: deepkamal-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATA_DIR
+        value: /var/data
+      - key: JWT_SECRET
+        generateValue: true

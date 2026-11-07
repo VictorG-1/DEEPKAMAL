@@ -5,10 +5,10 @@ const { queueNotification } = require('../lib/notify');
 
 const router = express.Router();
 
-router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const rows = db
+router.get('/', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const rows = (await db
     .prepare(`SELECT * FROM notifications ORDER BY id DESC LIMIT 80`)
-    .all()
+    .all())
     .map((n) => ({
       id: n.id,
       channel: n.channel,
@@ -24,7 +24,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
   res.json({ notifications: rows });
 });
 
-router.post('/send', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/send', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const { channel, recipient, subject, body } = req.body || {};
   if (!channel || !body) return res.status(400).json({ error: 'channel and body required' });
   const result = queueNotification({ channel, recipient, subject, body });
@@ -32,9 +32,9 @@ router.post('/send', requireAuth, requireRole('admin', 'manager'), (req, res) =>
 });
 
 /** Queue payment reminders for unpaid / partial invoices */
-router.post('/reminders/payments', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
+router.post('/reminders/payments', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
   const { notifyPaymentReminder } = require('../lib/notify');
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT i.*, c.name AS client_name, c.phone, c.email FROM invoices i
        LEFT JOIN clients c ON c.id = i.client_id
@@ -50,9 +50,9 @@ router.post('/reminders/payments', requireAuth, requireRole('admin', 'manager'),
 });
 
 /** Queue AMC reminders for clients expiring in 45 days */
-router.post('/reminders/amc', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
+router.post('/reminders/amc', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
   const { notifyAmcReminder } = require('../lib/notify');
-  const clients = db
+  const clients = await db
     .prepare(
       `SELECT * FROM clients WHERE amc_expires IS NOT NULL AND date(amc_expires) <= date('now', '+45 day')`
     )

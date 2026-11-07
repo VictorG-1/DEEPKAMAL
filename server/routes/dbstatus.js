@@ -5,7 +5,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-function snapshot() {
+async function snapshot() {
   const exists = fs.existsSync(db.dbPath);
   const sizeBytes = exists ? fs.statSync(db.dbPath).size : 0;
   const { status: supabaseStatus } = require('../lib/supabase');
@@ -19,45 +19,45 @@ function snapshot() {
     journalMode: db.pragma('journal_mode', { simple: true }),
     supabase: supabaseStatus(),
     counts: {
-      users: db.prepare('SELECT COUNT(*) AS c FROM users').get().c,
-      services: db.prepare('SELECT COUNT(*) AS c FROM services').get().c,
-      categories: db.prepare('SELECT COUNT(*) AS c FROM service_categories').get().c,
-      tickets: db.prepare('SELECT COUNT(*) AS c FROM tickets').get().c,
-      orders: db.prepare('SELECT COUNT(*) AS c FROM orders').get().c,
-      clients: db.prepare('SELECT COUNT(*) AS c FROM clients').get().c,
-      attendance: db.prepare('SELECT COUNT(*) AS c FROM attendance').get().c,
-      people: db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('admin','manager','resource')`).get().c,
-      materials: db.prepare('SELECT COUNT(*) AS c FROM materials').get().c,
-      quotations: db.prepare('SELECT COUNT(*) AS c FROM quotations').get().c,
-      invoices: db.prepare('SELECT COUNT(*) AS c FROM invoices').get().c,
-      assets: db.prepare('SELECT COUNT(*) AS c FROM site_assets').get().c,
-      vendors: db.prepare('SELECT COUNT(*) AS c FROM vendors').get().c
+      users: (await db.prepare('SELECT COUNT(*) AS c FROM users').get()).c,
+      services: (await db.prepare('SELECT COUNT(*) AS c FROM services').get()).c,
+      categories: (await db.prepare('SELECT COUNT(*) AS c FROM service_categories').get()).c,
+      tickets: (await db.prepare('SELECT COUNT(*) AS c FROM tickets').get()).c,
+      orders: (await db.prepare('SELECT COUNT(*) AS c FROM orders').get()).c,
+      clients: (await db.prepare('SELECT COUNT(*) AS c FROM clients').get()).c,
+      attendance: (await db.prepare('SELECT COUNT(*) AS c FROM attendance').get()).c,
+      people: (await db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('admin','manager','resource')`).get()).c,
+      materials: (await db.prepare('SELECT COUNT(*) AS c FROM materials').get()).c,
+      quotations: (await db.prepare('SELECT COUNT(*) AS c FROM quotations').get()).c,
+      invoices: (await db.prepare('SELECT COUNT(*) AS c FROM invoices').get()).c,
+      assets: (await db.prepare('SELECT COUNT(*) AS c FROM site_assets').get()).c,
+      vendors: (await db.prepare('SELECT COUNT(*) AS c FROM vendors').get()).c
     }
   };
 }
 
-router.get('/status', (_req, res) => {
+router.get('/status', async (_req, res) => {
   try {
-    res.json(snapshot());
+    res.json(await snapshot());
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-router.post('/ping-write', requireAuth, requireRole('admin'), (_req, res) => {
+router.post('/ping-write', requireAuth, requireRole('admin'), async (_req, res) => {
   try {
     const code = `PING-${Date.now()}`;
-    db.prepare(
+    await db.prepare(
       `INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'db', 0)`
     ).run(_req.user.id, `Database write test ${code}`);
-    const row = db.prepare(`SELECT id, message, created_at FROM activity_log ORDER BY id DESC LIMIT 1`).get();
-    res.json({ ok: true, wrote: row, status: snapshot() });
+    const row = await db.prepare(`SELECT id, message, created_at FROM activity_log ORDER BY id DESC LIMIT 1`).get();
+    res.json({ ok: true, wrote: row, status: await snapshot() });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-router.post('/backup', requireAuth, requireRole('admin'), (_req, res) => {
+router.post('/backup', requireAuth, requireRole('admin'), async (_req, res) => {
   try {
     const fs = require('fs');
     const path = require('path');

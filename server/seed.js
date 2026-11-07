@@ -5,18 +5,24 @@ const { starterPinFor, hashPin } = require('./lib/pins');
 
 const PASSWORD = 'DeepKamal@1';
 
-function upsertUser({ email, password, name, role, initials, color, title, team, wage = 0, kyc = 'Pending' }) {
-  const existing = db.prepare('SELECT id, pin_hash FROM users WHERE email = ? COLLATE NOCASE').get(email);
+function dayOffset(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+async function upsertUser({ email, password, name, role, initials, color, title, team, wage = 0, kyc = 'Pending' }) {
+  const existing = await db.prepare('SELECT id, pin_hash FROM users WHERE email = ? COLLATE NOCASE').get(email);
   if (existing) {
     // Do NOT reset password on every boot — partners keep their own PIN/password
-    db.prepare(`
+    await db.prepare(`
       UPDATE users SET name = ?, role = ?, initials = ?, avatar_color = ?,
         job_title = ?, team = ?, daily_wage = ?, kyc_status = ?
       WHERE id = ?
     `).run(name, role, initials, color, title, team, wage, kyc, existing.id);
     if (role === 'resource' && !existing.pin_hash) {
       const pin = starterPinFor(existing.id, name);
-      db.prepare(`UPDATE users SET pin_hash = ?, login_pin_hint = ?, must_change_password = 1 WHERE id = ?`).run(
+      await db.prepare(`UPDATE users SET pin_hash = ?, login_pin_hint = ?, must_change_password = 1 WHERE id = ?`).run(
         hashPin(pin),
         `****${pin.slice(-2)}`,
         existing.id
@@ -25,7 +31,7 @@ function upsertUser({ email, password, name, role, initials, color, title, team,
     return existing.id;
   }
   const hash = bcrypt.hashSync(password, 10);
-  const id = db.prepare(`
+  const id = (await db.prepare(`
     INSERT INTO users (
       email, password_hash, name, role, initials, avatar_color, job_title, team,
       daily_wage, availability, kyc_identity, kyc_bank, kyc_consent, kyc_status, must_change_password
@@ -45,10 +51,10 @@ function upsertUser({ email, password, name, role, initials, color, title, team,
     kyc === 'Verified' ? 'Granted' : 'Not received',
     kyc,
     role === 'resource' ? 1 : 0
-  ).lastInsertRowid;
+  )).lastInsertRowid;
   if (role === 'resource') {
     const pin = starterPinFor(id, name);
-    db.prepare(`UPDATE users SET pin_hash = ?, login_pin_hint = ? WHERE id = ?`).run(
+    await db.prepare(`UPDATE users SET pin_hash = ?, login_pin_hint = ? WHERE id = ?`).run(
       hashPin(pin),
       `****${pin.slice(-2)}`,
       id
@@ -57,13 +63,13 @@ function upsertUser({ email, password, name, role, initials, color, title, team,
   return id;
 }
 
-function ensurePartnerPins() {
-  const partners = db.prepare(`SELECT id, name, pin_hash FROM users WHERE role = 'resource'`).all();
+async function ensurePartnerPins() {
+  const partners = await db.prepare(`SELECT id, name, pin_hash FROM users WHERE role = 'resource'`).all();
   const pins = [];
   for (const p of partners) {
     if (p.pin_hash) continue;
     const pin = starterPinFor(p.id, p.name);
-    db.prepare(`UPDATE users SET pin_hash = ?, login_pin_hint = ?, must_change_password = 1 WHERE id = ?`).run(
+    await db.prepare(`UPDATE users SET pin_hash = ?, login_pin_hint = ?, must_change_password = 1 WHERE id = ?`).run(
       hashPin(pin),
       `****${pin.slice(-2)}`,
       p.id
@@ -73,7 +79,7 @@ function ensurePartnerPins() {
   return pins;
 }
 
-function seedLogins() {
+async function seedLogins() {
   // Real workspace logins only — no @deepkamal.demo aliases
   const accounts = [
     ['owner@deepkamal.in', 'DeepKamal Owner', 'admin', 'DK', 'gold', 'Owner', 'Leadership', 0, 'Verified'],
@@ -82,20 +88,20 @@ function seedLogins() {
     ['customer@deepkamal.in', 'Customer', 'customer', 'CU', 'purple', 'Customer', null, 0, 'Verified']
   ];
   for (const [email, name, role, initials, color, title, team, wage, kyc] of accounts) {
-    upsertUser({ email, password: PASSWORD, name, role, initials, color, title, team, wage, kyc });
+    await upsertUser({ email, password: PASSWORD, name, role, initials, color, title, team, wage, kyc });
   }
   // Drop legacy demo accounts if still present
-  db.prepare(`DELETE FROM users WHERE email LIKE '%@deepkamal.demo'`).run();
+  await db.prepare(`DELETE FROM users WHERE email LIKE '%@deepkamal.demo'`).run();
 }
 
-function seedStaff() {
+async function seedStaff() {
   const managers = [
     ['Pankaj Kapre', 'pankaj.kapre@deepkamal.in'],
     ['Jiten Jadav', 'jiten.jadav@deepkamal.in']
   ];
   for (const [name, email] of managers) {
     const initials = name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase();
-    upsertUser({
+    await upsertUser({
       email,
       password: PASSWORD,
       name,
@@ -125,10 +131,11 @@ function seedStaff() {
     'Salman Ali Corcut'
   ];
   const colors = ['blue', 'green', 'gold', 'purple'];
-  resources.forEach((name, i) => {
+  for (let i = 0; i < resources.length; i++) {
+    const name = resources[i];
     const email = `${name.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim().replace(/\s+/g, '.')}@deepkamal.in`;
     const initials = name.split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
-    upsertUser({
+    await upsertUser({
       email,
       password: PASSWORD,
       name,
@@ -140,18 +147,18 @@ function seedStaff() {
       wage: 1000,
       kyc: 'Pending'
     });
-  });
+  }
 }
 
-function seedCatalog() {
-  if (db.prepare('SELECT COUNT(*) AS c FROM service_categories').get().c > 0) return;
+async function seedCatalog() {
+  if ((await db.prepare('SELECT COUNT(*) AS c FROM service_categories').get()).c > 0) return;
 
   const insertCat = db.prepare(`INSERT INTO service_categories (name, icon, sort_order) VALUES (?, ?, ?)`);
   const cats = [
-    insertCat.run('Fire Safety', '♨', 1).lastInsertRowid,
-    insertCat.run('Electrical', '⚡', 2).lastInsertRowid,
-    insertCat.run('AMC & Maintenance', '▣', 3).lastInsertRowid,
-    insertCat.run('Emergency', '◌', 4).lastInsertRowid
+    (await insertCat.run('Fire Safety', '♨', 1)).lastInsertRowid,
+    (await insertCat.run('Electrical', '⚡', 2)).lastInsertRowid,
+    (await insertCat.run('AMC & Maintenance', '▣', 3)).lastInsertRowid,
+    (await insertCat.run('Emergency', '◌', 4)).lastInsertRowid
   ];
 
   const insertSvc = db.prepare(`
@@ -170,10 +177,17 @@ function seedCatalog() {
     [cats[3], '◌', 'Emergency site visit', 'Priority technician dispatch', 2500, 60],
     [cats[3], '!', 'Critical fault callout', 'Same-day critical electrical / fire response', 4500, 90]
   ];
-  for (const row of services) insertSvc.run(...row);
+  for (const row of services) await insertSvc.run(...row);
 }
 
-function seedMaterials() {
+async function seedMaterials() {
+  const existing = Number((await db.prepare('SELECT COUNT(*) AS c FROM materials').get()).c);
+  if (existing > 50) {
+    const missing = await db.prepare(`SELECT id, sku FROM materials WHERE barcode IS NULL OR barcode = ''`).all();
+    const fix = db.prepare('UPDATE materials SET barcode = ? WHERE id = ?');
+    for (const m of missing) await fix.run(toBarcode(m.sku), m.id);
+    return;
+  }
   const catalog = require('./materials-catalog');
   const upsert = db.prepare(`
     INSERT INTO materials (sku, category, name, unit, rate, gst_pct, description, color_name, color_hex, barcode, active, sort_order)
@@ -191,10 +205,11 @@ function seedMaterials() {
       active = 1,
       sort_order = excluded.sort_order
   `);
-  const tx = db.transaction((rows) => {
-    rows.forEach((row, i) => {
+  await db.transaction(async () => {
+    for (let i = 0; i < catalog.length; i++) {
+      const row = catalog[i];
       const [sku, category, name, unit, rate, gst, description, colorName, colorHex] = row;
-      upsert.run(
+      await upsert.run(
         sku,
         category,
         name,
@@ -207,45 +222,44 @@ function seedMaterials() {
         toBarcode(sku),
         i + 1
       );
-    });
+    }
   });
-  tx(catalog);
 
   // Ensure every active material has a barcode
-  const missing = db.prepare(`SELECT id, sku FROM materials WHERE barcode IS NULL OR barcode = ''`).all();
+  const missing = await db.prepare(`SELECT id, sku FROM materials WHERE barcode IS NULL OR barcode = ''`).all();
   const fix = db.prepare('UPDATE materials SET barcode = ? WHERE id = ?');
-  for (const m of missing) fix.run(toBarcode(m.sku), m.id);
+  for (const m of missing) await fix.run(toBarcode(m.sku), m.id);
 
   // Hide legacy uncoloured wire SKUs
-  db.prepare(
+  await db.prepare(
     `UPDATE materials SET active = 0
      WHERE sku IN ('EL-WR-15','EL-WR-25','EL-WR-40','EL-WR-60','EL-WR-10','EL-WR-16','EL-WR-25C','EL-WR-35','EL-WR-50')`
   ).run();
 }
 
-function seedInventory() {
+async function seedInventory() {
   const { seedInitialStock } = require('./lib/inventory');
-  seedInitialStock(500);
+  await seedInitialStock(500);
 }
 
-function seedBanks() {
-  if (db.prepare('SELECT COUNT(*) AS c FROM bank_accounts').get().c > 0) return;
-  db.prepare(`INSERT INTO bank_accounts (bank_name, account_type, suffix, active) VALUES (?, ?, ?, 1)`)
+async function seedBanks() {
+  if ((await db.prepare('SELECT COUNT(*) AS c FROM bank_accounts').get()).c > 0) return;
+  await db.prepare(`INSERT INTO bank_accounts (bank_name, account_type, suffix, active) VALUES (?, ?, ?, 1)`)
     .run('HDFC Bank', 'Current account', '4821');
-  db.prepare(`INSERT INTO bank_accounts (bank_name, account_type, suffix, active) VALUES (?, ?, ?, 0)`)
+  await db.prepare(`INSERT INTO bank_accounts (bank_name, account_type, suffix, active) VALUES (?, ?, ?, 0)`)
     .run('ICICI Bank', 'Current account', '9033');
 }
 
-function seedVendorsAndAssets() {
-  if (db.prepare('SELECT COUNT(*) AS c FROM vendors').get().c === 0) {
-    db.prepare(`INSERT INTO vendors (name, phone, email, gstin, address) VALUES (?, ?, ?, ?, ?)`).run(
+async function seedVendorsAndAssets() {
+  if ((await db.prepare('SELECT COUNT(*) AS c FROM vendors').get()).c === 0) {
+    await db.prepare(`INSERT INTO vendors (name, phone, email, gstin, address) VALUES (?, ?, ?, ?, ?)`).run(
       'ElectroTrade Mumbai',
       '9820001111',
       'sales@electrotrade.example',
       '27AABCE1234F1Z5',
       'Kurla, Mumbai'
     );
-    db.prepare(`INSERT INTO vendors (name, phone, email, gstin, address) VALUES (?, ?, ?, ?, ?)`).run(
+    await db.prepare(`INSERT INTO vendors (name, phone, email, gstin, address) VALUES (?, ?, ?, ?, ?)`).run(
       'FireSafe Supplies',
       '9820002222',
       'orders@firesafe.example',
@@ -254,32 +268,43 @@ function seedVendorsAndAssets() {
     );
   }
 
-  if (db.prepare('SELECT COUNT(*) AS c FROM site_assets').get().c === 0) {
-    const client = db.prepare('SELECT id FROM clients ORDER BY id LIMIT 1').get();
+  if ((await db.prepare('SELECT COUNT(*) AS c FROM site_assets').get()).c === 0) {
+    const client = await db.prepare('SELECT id FROM clients ORDER BY id LIMIT 1').get();
     if (client) {
-      const site = db.prepare('SELECT id FROM sites WHERE client_id = ? LIMIT 1').get(client.id);
+      const site = await db.prepare('SELECT id FROM sites WHERE client_id = ? LIMIT 1').get(client.id);
       const ins = db.prepare(
         `INSERT INTO site_assets (client_id, site_id, asset_type, name, serial_no, location_note, capacity, installed_on, last_service_on, next_service_due, next_refill_due, next_hydro_due, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, date('now','-180 day'), date('now','-30 day'), date('now','+15 day'), date('now','+20 day'), date('now','+200 day'), 'Active')`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')`
       );
-      ins.run(client.id, site?.id || null, 'Extinguisher', 'ABC 6kg — Lobby', 'EX-ABC-1001', 'Main lobby', '6 kg');
-      ins.run(client.id, site?.id || null, 'Hydrant', 'Landing valve L2', 'HY-2002', 'Staircase L2', '63 mm');
-      ins.run(client.id, site?.id || null, 'Panel', 'Fire alarm panel', 'FA-3003', 'Security room', '4 zone');
+      await ins.run(
+        client.id, site?.id || null, 'Extinguisher', 'ABC 6kg — Lobby', 'EX-ABC-1001', 'Main lobby', '6 kg',
+        dayOffset(-180), dayOffset(-30), dayOffset(15), dayOffset(20), dayOffset(200)
+      );
+      await ins.run(
+        client.id, site?.id || null, 'Hydrant', 'Landing valve L2', 'HY-2002', 'Staircase L2', '63 mm',
+        dayOffset(-180), dayOffset(-30), dayOffset(15), dayOffset(20), dayOffset(200)
+      );
+      await ins.run(
+        client.id, site?.id || null, 'Panel', 'Fire alarm panel', 'FA-3003', 'Security room', '4 zone',
+        dayOffset(-180), dayOffset(-30), dayOffset(15), dayOffset(20), dayOffset(200)
+      );
     }
   }
 }
 
-function seedCustomerClient() {
-  const user = db.prepare(`SELECT * FROM users WHERE email = 'customer@deepkamal.in'`).get();
+async function seedCustomerClient() {
+  const user = await db.prepare(`SELECT * FROM users WHERE email = 'customer@deepkamal.in'`).get();
   if (!user) return;
   if (user.client_id) {
-    db.prepare(`UPDATE clients SET amc_expires = COALESCE(amc_expires, date('now', '+20 day')) WHERE id = ?`).run(user.client_id);
+    await db
+      .prepare(`UPDATE clients SET amc_expires = COALESCE(amc_expires, ?) WHERE id = ?`)
+      .run(dayOffset(20), user.client_id);
     return;
   }
-  const clientId = db
+  const clientId = (await db
     .prepare(
       `INSERT INTO clients (name, location, address, phone, email, gstin, contact_person, sites_count, amc_status, amc_expires, referral_code)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Active AMC', date('now', '+20 day'), ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Active AMC', ?, ?)`
     )
     .run(
       'Walk-in Customer Account',
@@ -289,28 +314,29 @@ function seedCustomerClient() {
       'customer@deepkamal.in',
       null,
       'Customer',
+      dayOffset(20),
       'CUST250'
-    ).lastInsertRowid;
-  db.prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, 'Primary site', ?, 'Mumbai')`)
+    )).lastInsertRowid;
+  await db.prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, 'Primary site', ?, 'Mumbai')`)
     .run(clientId, 'Andheri East');
-  db.prepare(`UPDATE users SET client_id = ? WHERE id = ?`).run(clientId, user.id);
+  await db.prepare(`UPDATE users SET client_id = ? WHERE id = ?`).run(clientId, user.id);
 }
 
-function seed() {
-  seedLogins();
-  seedStaff();
-  seedCatalog();
-  seedMaterials();
-  seedInventory();
-  seedBanks();
-  seedCustomerClient();
-  seedVendorsAndAssets();
-  const newPins = ensurePartnerPins();
-  const materials = db.prepare('SELECT COUNT(*) AS c FROM materials WHERE active = 1').get().c;
-  const coloured = db.prepare(`SELECT COUNT(*) AS c FROM materials WHERE active = 1 AND color_name IS NOT NULL`).get().c;
-  const barcodes = db.prepare(`SELECT COUNT(*) AS c FROM materials WHERE active = 1 AND barcode IS NOT NULL`).get().c;
-  const stockRows = db.prepare('SELECT COUNT(*) AS c FROM inventory_stock').get().c;
-  console.log('Database ready at data/deepkamal.db');
+async function seed() {
+  await seedLogins();
+  await seedStaff();
+  await seedCatalog();
+  await seedMaterials();
+  await seedInventory();
+  await seedBanks();
+  await seedCustomerClient();
+  await seedVendorsAndAssets();
+  const newPins = await ensurePartnerPins();
+  const materials = (await db.prepare('SELECT COUNT(*) AS c FROM materials WHERE active = 1').get()).c;
+  const coloured = (await db.prepare(`SELECT COUNT(*) AS c FROM materials WHERE active = 1 AND color_name IS NOT NULL`).get()).c;
+  const barcodes = (await db.prepare(`SELECT COUNT(*) AS c FROM materials WHERE active = 1 AND barcode IS NOT NULL`).get()).c;
+  const stockRows = (await db.prepare('SELECT COUNT(*) AS c FROM inventory_stock').get()).c;
+  console.log(`Database ready (${db.driver || 'sqlite'})`, db.dbPath || '');
   console.log(`Materials: ${materials} active · ${coloured} colour-coded · ${barcodes} with barcodes · stock rows ${stockRows}`);
   console.log('Owner/manager/customer password: DeepKamal@1');
   console.log('  owner@deepkamal.in · manager@deepkamal.in · customer@deepkamal.in');
@@ -320,4 +346,19 @@ function seed() {
   }
 }
 
-seed();
+
+const ready = seed().catch(async (e) => {
+  console.error('Seed failed:', e.message || e);
+  // Don't permanently block the API if core data already exists
+  try {
+    const n = Number((await db.prepare('SELECT COUNT(*) AS c FROM users').get())?.c || 0);
+    if (n > 0) {
+      console.warn(`Continuing with ${n} existing users after seed error.`);
+      return;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  throw e;
+});
+module.exports = { ready, seed };

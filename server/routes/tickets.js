@@ -7,8 +7,8 @@ const router = express.Router();
 const STATUSES = ['Unassigned', 'Assigned', 'On the way', 'In progress', 'Resolved', 'Closed'];
 const OPEN_STATUSES = ['Unassigned', 'Assigned', 'On the way', 'In progress'];
 
-function nextTicketCode() {
-  const row = db
+async function nextTicketCode() {
+  const row = await db
     .prepare(`SELECT MAX(CAST(REPLACE(code, 'DK-', '') AS INTEGER)) AS n FROM tickets WHERE code GLOB 'DK-[0-9]*'`)
     .get();
   return `DK-${(row?.n || 2900) + 1}`;
@@ -58,26 +58,26 @@ const ticketSelect = `
   LEFT JOIN users u ON u.id = t.assigned_user_id
 `;
 
-function getTicket(id) {
-  return db.prepare(`${ticketSelect} WHERE t.id = ?`).get(id);
+async function getTicket(id) {
+  return await db.prepare(`${ticketSelect} WHERE t.id = ?`).get(id);
 }
 
-function logActivity(user, message, ticketId) {
-  db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'ticket', ?)`)
+async function logActivity(user, message, ticketId) {
+  await db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'ticket', ?)`)
     .run(user.id, message, ticketId);
 }
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   let rows;
   if (req.user.role === 'resource') {
-    rows = db.prepare(`${ticketSelect} WHERE t.assigned_user_id = ? ORDER BY t.updated_at DESC`).all(req.user.id);
+    rows = await db.prepare(`${ticketSelect} WHERE t.assigned_user_id = ? ORDER BY t.updated_at DESC`).all(req.user.id);
   } else if (req.user.role === 'customer') {
-    const user = db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
-    rows = db
+    const user = await db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
+    rows = await db
       .prepare(`${ticketSelect} WHERE t.client_id = ? ORDER BY t.updated_at DESC`)
       .all(user?.client_id || -1);
   } else {
-    rows = db.prepare(`${ticketSelect} ORDER BY t.updated_at DESC`).all();
+    rows = await db.prepare(`${ticketSelect} ORDER BY t.updated_at DESC`).all();
   }
   res.json({ tickets: rows.map(mapTicket), statuses: STATUSES });
 });
@@ -125,8 +125,8 @@ function resolveSiteCoords(site, clientLocation) {
   return { lat: hq.lat + (Math.random() - 0.5) * 0.08, lng: hq.lng + (Math.random() - 0.5) * 0.08, source: 'approx' };
 }
 
-router.get('/dispatch', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const openRows = db
+router.get('/dispatch', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const openRows = await db
     .prepare(
       `${ticketSelect} WHERE t.status IN ('Unassigned','Assigned','On the way','In progress') ORDER BY
         CASE t.priority WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 ELSE 2 END,
@@ -135,9 +135,9 @@ router.get('/dispatch', requireAuth, requireRole('admin', 'manager'), (_req, res
     .all();
 
   const hq = hqCoords();
-  const open = openRows.map((row) => {
+  const open = await Promise.all(openRows.map(async (row) => {
     const t = mapTicket(row);
-    const site = row.site_id ? db.prepare('SELECT * FROM sites WHERE id = ?').get(row.site_id) : null;
+    const site = row.site_id ? await db.prepare('SELECT * FROM sites WHERE id = ?').get(row.site_id) : null;
     const coords = resolveSiteCoords(site, row.client_location);
     const km = Math.round(haversineKm(hq.lat, hq.lng, coords.lat, coords.lng) * 10) / 10;
     const etaMins = Math.max(15, Math.round((km / 25) * 60) + 10); // ~25 km/h city + 10 min buffer
@@ -145,15 +145,15 @@ router.get('/dispatch', requireAuth, requireRole('admin', 'manager'), (_req, res
       ...t,
       map: { ...coords, kmFromHq: km, etaMins, etaLabel: `${etaMins} min` }
     };
-  });
+  }));
 
-  const partners = db
+  const partners = (await db
     .prepare(
       `SELECT id, name, initials, avatar_color, availability, job_title, team, home_lat, home_lng,
         (SELECT COUNT(*) FROM tickets WHERE assigned_user_id = users.id AND status IN ('Assigned','On the way','In progress')) AS active_jobs
        FROM users WHERE role = 'resource' ORDER BY name`
     )
-    .all()
+    .all())
     .map((p) => ({
       id: p.id,
       name: p.name,
@@ -176,27 +176,27 @@ router.get('/dispatch', requireAuth, requireRole('admin', 'manager'), (_req, res
   });
 });
 
-function canAccessTicket(user, ticket) {
+async function canAccessTicket(user, ticket) {
   if (!ticket) return false;
   if (['admin', 'manager'].includes(user.role)) return true;
   if (user.role === 'resource' && ticket.assigned_user_id === user.id) return true;
   if (user.role === 'customer') {
-    const u = db.prepare('SELECT client_id FROM users WHERE id = ?').get(user.id);
+    const u = await db.prepare('SELECT client_id FROM users WHERE id = ?').get(user.id);
     return u?.client_id && u.client_id === ticket.client_id;
   }
   return false;
 }
 
-router.get('/:id/messages', requireAuth, (req, res) => {
-  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
+router.get('/:id/messages', requireAuth, async (req, res) => {
+  const ticket = await db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
   if (!canAccessTicket(req.user, ticket)) return res.status(403).json({ error: 'Not allowed' });
-  const messages = db
+  const messages = (await db
     .prepare(
       `SELECT m.*, u.name AS user_name, u.initials FROM ticket_messages m
        LEFT JOIN users u ON u.id = m.user_id
        WHERE m.ticket_id = ? ORDER BY m.id`
     )
-    .all(ticket.id)
+    .all(ticket.id))
     .map((m) => ({
       id: m.id,
       body: m.body,
@@ -205,19 +205,19 @@ router.get('/:id/messages', requireAuth, (req, res) => {
       initials: m.initials || '?',
       createdAt: m.created_at
     }));
-  res.json({ messages, ticket: mapTicket(getTicket(ticket.id)) });
+  res.json({ messages, ticket: mapTicket(await getTicket(ticket.id)) });
 });
 
-router.post('/:id/messages', requireAuth, (req, res) => {
-  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
+router.post('/:id/messages', requireAuth, async (req, res) => {
+  const ticket = await db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
   if (!canAccessTicket(req.user, ticket)) return res.status(403).json({ error: 'Not allowed' });
   const body = String(req.body?.body || '').trim();
   if (!body) return res.status(400).json({ error: 'Message required' });
-  const result = db
+  const result = await db
     .prepare(`INSERT INTO ticket_messages (ticket_id, user_id, role, body) VALUES (?, ?, ?, ?)`)
     .run(ticket.id, req.user.id, req.user.role, body.slice(0, 2000));
-  db.prepare(`UPDATE tickets SET updated_at = datetime('now') WHERE id = ?`).run(ticket.id);
-  const m = db
+  await db.prepare(`UPDATE tickets SET updated_at = datetime('now') WHERE id = ?`).run(ticket.id);
+  const m = await db
     .prepare(
       `SELECT m.*, u.name AS user_name, u.initials FROM ticket_messages m
        LEFT JOIN users u ON u.id = m.user_id WHERE m.id = ?`
@@ -235,19 +235,19 @@ router.post('/:id/messages', requireAuth, (req, res) => {
   });
 });
 
-router.post('/', requireAuth, (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   const { title, description, clientId, siteId, priority, assignedUserId } = req.body || {};
   if (!title) return res.status(400).json({ error: 'Title is required' });
 
   let resolvedClientId = clientId || null;
   if (req.user.role === 'customer') {
-    const user = db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
+    const user = await db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
     resolvedClientId = user?.client_id || null;
   }
 
   const status = assignedUserId ? 'Assigned' : 'Unassigned';
-  const code = nextTicketCode();
-  const result = db
+  const code = await nextTicketCode();
+  const result = await db
     .prepare(
       `INSERT INTO tickets (code, title, description, client_id, site_id, assigned_user_id, priority, status, created_by, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
@@ -264,38 +264,38 @@ router.post('/', requireAuth, (req, res) => {
       req.user.id
     );
 
-  logActivity(req.user, `${req.user.name} created ticket ${code}`, result.lastInsertRowid);
-  res.status(201).json({ ticket: mapTicket(getTicket(result.lastInsertRowid)) });
+  await logActivity(req.user, `${req.user.name} created ticket ${code}`, result.lastInsertRowid);
+  res.status(201).json({ ticket: mapTicket(await getTicket(result.lastInsertRowid)) });
 });
 
-router.post('/:id/assign', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
+router.post('/:id/assign', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const ticket = await db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   const assignedUserId = Number(req.body?.assignedUserId);
   if (!assignedUserId) return res.status(400).json({ error: 'assignedUserId is required' });
 
-  const partner = db.prepare(`SELECT * FROM users WHERE id = ? AND role = 'resource'`).get(assignedUserId);
+  const partner = await db.prepare(`SELECT * FROM users WHERE id = ? AND role = 'resource'`).get(assignedUserId);
   if (!partner) return res.status(400).json({ error: 'Partner not found' });
 
-  db.prepare(
+  await db.prepare(
     `UPDATE tickets SET assigned_user_id = ?, status = 'Assigned', updated_at = datetime('now') WHERE id = ?`
   ).run(partner.id, ticket.id);
 
-  db.prepare(`UPDATE users SET availability = 'On site' WHERE id = ?`).run(partner.id);
-  logActivity(req.user, `${req.user.name} assigned ${ticket.code} to ${partner.name}`, ticket.id);
+  await db.prepare(`UPDATE users SET availability = 'On site' WHERE id = ?`).run(partner.id);
+  await logActivity(req.user, `${req.user.name} assigned ${ticket.code} to ${partner.name}`, ticket.id);
   try {
     const { notifyAssignment } = require('../lib/notify');
-    notifyAssignment(getTicket(ticket.id), partner);
+    await notifyAssignment(await getTicket(ticket.id), partner);
   } catch (_) {
     /* optional */
   }
 
-  res.json({ ticket: mapTicket(getTicket(ticket.id)) });
+  res.json({ ticket: mapTicket(await getTicket(ticket.id)) });
 });
 
-router.post('/:id/status', requireAuth, requireRole('admin', 'manager', 'resource'), (req, res) => {
-  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
+router.post('/:id/status', requireAuth, requireRole('admin', 'manager', 'resource'), async (req, res) => {
+  const ticket = await db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   const status = req.body?.status;
@@ -307,20 +307,20 @@ router.post('/:id/status', requireAuth, requireRole('admin', 'manager', 'resourc
     return res.status(403).json({ error: 'This job is not assigned to you' });
   }
 
-  db.prepare(`UPDATE tickets SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, ticket.id);
-  logActivity(req.user, `${req.user.name} set ${ticket.code} to ${status}`, ticket.id);
+  await db.prepare(`UPDATE tickets SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, ticket.id);
+  await logActivity(req.user, `${req.user.name} set ${ticket.code} to ${status}`, ticket.id);
 
   if (status === 'Resolved' || status === 'Closed') {
     if (ticket.assigned_user_id) {
-      db.prepare(`UPDATE users SET availability = 'Available' WHERE id = ?`).run(ticket.assigned_user_id);
+      await db.prepare(`UPDATE users SET availability = 'Available' WHERE id = ?`).run(ticket.assigned_user_id);
     }
   }
 
-  res.json({ ticket: mapTicket(getTicket(ticket.id)) });
+  res.json({ ticket: mapTicket(await getTicket(ticket.id)) });
 });
 
-router.post('/:id/complete', requireAuth, requireRole('admin', 'manager', 'resource'), (req, res) => {
-  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
+router.post('/:id/complete', requireAuth, requireRole('admin', 'manager', 'resource'), async (req, res) => {
+  const ticket = await db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   if (req.user.role === 'resource' && ticket.assigned_user_id !== req.user.id) {
@@ -328,7 +328,7 @@ router.post('/:id/complete', requireAuth, requireRole('admin', 'manager', 'resou
   }
 
   const { latitude, longitude, notes, capturedAt } = req.body || {};
-  const evidence = db
+  const evidence = await db
     .prepare(
       `INSERT INTO work_evidence (ticket_id, user_id, captured_at, latitude, longitude, notes)
        VALUES (?, ?, ?, ?, ?, ?)`
@@ -342,22 +342,22 @@ router.post('/:id/complete', requireAuth, requireRole('admin', 'manager', 'resou
       notes || 'Job completed'
     );
 
-  db.prepare(`UPDATE tickets SET status = 'Resolved', updated_at = datetime('now') WHERE id = ?`).run(ticket.id);
+  await db.prepare(`UPDATE tickets SET status = 'Resolved', updated_at = datetime('now') WHERE id = ?`).run(ticket.id);
   if (ticket.assigned_user_id) {
-    db.prepare(`UPDATE users SET availability = 'Available' WHERE id = ?`).run(ticket.assigned_user_id);
+    await db.prepare(`UPDATE users SET availability = 'Available' WHERE id = ?`).run(ticket.assigned_user_id);
   }
 
-  logActivity(req.user, `${req.user.name} completed ${ticket.code}`, ticket.id);
+  await logActivity(req.user, `${req.user.name} completed ${ticket.code}`, ticket.id);
 
   res.json({
     ok: true,
     evidenceId: evidence.lastInsertRowid,
-    ticket: mapTicket(getTicket(ticket.id))
+    ticket: mapTicket(await getTicket(ticket.id))
   });
 });
 
-router.patch('/:id', requireAuth, requireRole('admin', 'manager', 'resource'), (req, res) => {
-  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
+router.patch('/:id', requireAuth, requireRole('admin', 'manager', 'resource'), async (req, res) => {
+  const ticket = await db.prepare('SELECT * FROM tickets WHERE id = ?').get(req.params.id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
   const { status, assignedUserId, priority, title, description } = req.body || {};
@@ -370,7 +370,7 @@ router.patch('/:id', requireAuth, requireRole('admin', 'manager', 'resource'), (
     return res.status(400).json({ error: 'Invalid status' });
   }
 
-  db.prepare(
+  await db.prepare(
     `UPDATE tickets SET
       status = ?,
       assigned_user_id = ?,
@@ -381,7 +381,7 @@ router.patch('/:id', requireAuth, requireRole('admin', 'manager', 'resource'), (
      WHERE id = ?`
   ).run(nextStatus, nextAssignee, priority || null, title || null, description || null, ticket.id);
 
-  res.json({ ticket: mapTicket(getTicket(ticket.id)) });
+  res.json({ ticket: mapTicket(await getTicket(ticket.id)) });
 });
 
 module.exports = router;

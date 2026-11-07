@@ -4,12 +4,12 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-function mapClient(c) {
-  const openTickets = db
+async function mapClient(c) {
+  const openTickets = (await db
     .prepare(`SELECT COUNT(*) AS c FROM tickets WHERE client_id = ? AND status NOT IN ('Resolved','Closed')`)
-    .get(c.id).c;
-  const quoteCount = db.prepare(`SELECT COUNT(*) AS c FROM quotations WHERE client_id = ?`).get(c.id).c;
-  const sites = db.prepare('SELECT * FROM sites WHERE client_id = ?').all(c.id);
+    .get(c.id)).c;
+  const quoteCount = (await db.prepare(`SELECT COUNT(*) AS c FROM quotations WHERE client_id = ?`).get(c.id)).c;
+  const sites = await db.prepare('SELECT * FROM sites WHERE client_id = ?').all(c.id);
   return {
     id: c.id,
     name: c.name,
@@ -37,29 +37,29 @@ function mapClient(c) {
   };
 }
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   let clients;
   if (req.user.role === 'customer') {
-    const user = db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
-    clients = db.prepare('SELECT * FROM clients WHERE id = ?').all(user.client_id);
+    const user = await db.prepare('SELECT client_id FROM users WHERE id = ?').get(req.user.id);
+    clients = await db.prepare('SELECT * FROM clients WHERE id = ?').all(user.client_id);
   } else {
-    clients = db.prepare('SELECT * FROM clients ORDER BY name').all();
+    clients = await db.prepare('SELECT * FROM clients ORDER BY name').all();
   }
-  res.json({ clients: clients.map(mapClient) });
+  res.json({ clients: await Promise.all(clients.map(mapClient)) });
 });
 
-router.get('/:id', requireAuth, (req, res) => {
-  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.id);
+router.get('/:id', requireAuth, async (req, res) => {
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.id);
   if (!client) return res.status(404).json({ error: 'Client not found' });
-  res.json({ client: mapClient(client) });
+  res.json({ client: await mapClient(client) });
 });
 
-router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const { name, location, address, phone, email, gstin, contactPerson, sitesCount, amcStatus, siteName } =
     req.body || {};
   if (!name) return res.status(400).json({ error: 'Client name is required' });
 
-  const result = db
+  const result = await db
     .prepare(
       `INSERT INTO clients (name, location, sites_count, amc_status, referral_code, phone, email, gstin, address, contact_person)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -78,21 +78,23 @@ router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
     );
 
   const clientId = result.lastInsertRowid;
-  db.prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, ?, ?, ?)`).run(
+  await db.prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, ?, ?, ?)`).run(
     clientId,
     siteName || 'Main site',
     address || location || null,
     location || null
   );
 
-  res.status(201).json({ client: mapClient(db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId)) });
+  res.status(201).json({
+    client: await mapClient(await db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId))
+  });
 });
 
-router.patch('/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.id);
+router.patch('/:id', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const client = await db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.id);
   if (!client) return res.status(404).json({ error: 'Client not found' });
   const b = req.body || {};
-  db.prepare(
+  await db.prepare(
     `UPDATE clients SET
       name = COALESCE(?, name),
       location = COALESCE(?, location),
@@ -116,11 +118,11 @@ router.patch('/:id', requireAuth, requireRole('admin', 'manager'), (req, res) =>
     b.sitesCount != null ? Number(b.sitesCount) : null,
     client.id
   );
-  res.json({ client: mapClient(db.prepare('SELECT * FROM clients WHERE id = ?').get(client.id)) });
+  res.json({ client: await mapClient(await db.prepare('SELECT * FROM clients WHERE id = ?').get(client.id)) });
 });
 
-router.get('/:id/sites', requireAuth, (req, res) => {
-  const sites = db.prepare('SELECT * FROM sites WHERE client_id = ?').all(req.params.id);
+router.get('/:id/sites', requireAuth, async (req, res) => {
+  const sites = await db.prepare('SELECT * FROM sites WHERE client_id = ?').all(req.params.id);
   res.json({ sites });
 });
 

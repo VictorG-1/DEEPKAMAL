@@ -4,8 +4,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-function nextOrderCode() {
-  const row = db.prepare(`SELECT code FROM orders ORDER BY id DESC LIMIT 1`).get();
+async function nextOrderCode() {
+  const row = await db.prepare(`SELECT code FROM orders ORDER BY id DESC LIMIT 1`).get();
   const n = row ? parseInt(String(row.code).replace(/\D/g, ''), 10) + 1 : 2901;
   return `DK-${n}`;
 }
@@ -23,12 +23,12 @@ function mapService(s) {
   };
 }
 
-router.get('/catalog', requireAuth, (_req, res) => {
-  const categories = db
+router.get('/catalog', requireAuth, async (_req, res) => {
+  const categories = (await db
     .prepare(`SELECT * FROM service_categories ORDER BY sort_order, id`)
-    .all()
+    .all())
     .map((c) => ({ id: c.id, name: c.name, icon: c.icon }));
-  const services = db
+  const services = (await db
     .prepare(
       `SELECT s.*, c.name AS category_name
        FROM services s
@@ -36,34 +36,34 @@ router.get('/catalog', requireAuth, (_req, res) => {
        WHERE s.active = 1
        ORDER BY c.sort_order, s.id`
     )
-    .all()
+    .all())
     .map(mapService);
   res.json({ categories, services });
 });
 
-router.get('/', requireAuth, (_req, res) => {
-  const services = db
+router.get('/', requireAuth, async (_req, res) => {
+  const services = (await db
     .prepare(
       `SELECT s.*, c.name AS category_name
        FROM services s
        LEFT JOIN service_categories c ON c.id = s.category_id
        WHERE s.active = 1 ORDER BY s.id`
     )
-    .all()
+    .all())
     .map(mapService);
   res.json({ services });
 });
 
-router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const { name, description, price, icon, categoryId, durationMins } = req.body || {};
   if (!name || price == null) return res.status(400).json({ error: 'name and price are required' });
-  const result = db
+  const result = await db
     .prepare(
       `INSERT INTO services (category_id, icon, name, description, price, duration_mins, active)
        VALUES (?, ?, ?, ?, ?, ?, 1)`
     )
     .run(categoryId || null, icon || '◉', name.trim(), description || null, Number(price), durationMins || 60);
-  const service = db
+  const service = await db
     .prepare(
       `SELECT s.*, c.name AS category_name FROM services s
        LEFT JOIN service_categories c ON c.id = s.category_id WHERE s.id = ?`
@@ -72,10 +72,10 @@ router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   res.status(201).json({ service: mapService(service) });
 });
 
-router.get('/orders', requireAuth, (req, res) => {
+router.get('/orders', requireAuth, async (req, res) => {
   let orders;
   if (req.user.role === 'customer') {
-    orders = db
+    orders = await db
       .prepare(
         `SELECT o.*, s.name AS site_name, c.name AS client_name
          FROM orders o
@@ -86,7 +86,7 @@ router.get('/orders', requireAuth, (req, res) => {
       )
       .all(req.user.id);
   } else {
-    orders = db
+    orders = await db
       .prepare(
         `SELECT o.*, s.name AS site_name, c.name AS client_name, u.name AS customer_name
          FROM orders o
@@ -115,42 +115,42 @@ router.get('/orders', requireAuth, (req, res) => {
   });
 });
 
-router.post('/orders', requireAuth, (req, res) => {
+router.post('/orders', requireAuth, async (req, res) => {
   const { serviceId, siteId, address, slot } = req.body || {};
   if (!serviceId) return res.status(400).json({ error: 'serviceId is required' });
 
-  const service = db.prepare('SELECT * FROM services WHERE id = ? AND active = 1').get(serviceId);
+  const service = await db.prepare('SELECT * FROM services WHERE id = ? AND active = 1').get(serviceId);
   if (!service) return res.status(404).json({ error: 'Service not found' });
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   let clientId = user.client_id;
   let resolvedSiteId = siteId || null;
 
   if (req.user.role !== 'customer' && req.body.clientId) clientId = req.body.clientId;
 
   if (!clientId && req.user.role === 'customer') {
-    const created = db
+    const created = await db
       .prepare(
         `INSERT INTO clients (name, location, sites_count, amc_status, referral_code)
          VALUES (?, ?, 1, 'New', ?)`
       )
       .run(user.name, address || null, user.name.replace(/\s+/g, '').slice(0, 8).toUpperCase() + '250');
     clientId = created.lastInsertRowid;
-    db.prepare('UPDATE users SET client_id = ? WHERE id = ?').run(clientId, user.id);
-    db.prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, 'Primary site', ?, ?)`)
+    await db.prepare('UPDATE users SET client_id = ? WHERE id = ?').run(clientId, user.id);
+    await db.prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, 'Primary site', ?, ?)`)
       .run(clientId, address || null, null);
   }
 
   if (!resolvedSiteId && clientId) {
-    const firstSite = db.prepare('SELECT id FROM sites WHERE client_id = ? LIMIT 1').get(clientId);
+    const firstSite = await db.prepare('SELECT id FROM sites WHERE client_id = ? LIMIT 1').get(clientId);
     resolvedSiteId = firstSite ? firstSite.id : null;
   }
 
-  const code = nextOrderCode();
+  const code = await nextOrderCode();
   const payNow = req.body?.payNow !== false;
   const paymentStatus = payNow ? 'Paid' : 'Pending';
   const amountPaid = payNow ? service.price : 0;
-  const result = db
+  const result = await db
     .prepare(
       `INSERT INTO orders (
          code, customer_user_id, client_id, site_id, service_id, service_name,
@@ -171,13 +171,13 @@ router.post('/orders', requireAuth, (req, res) => {
       amountPaid
     );
   if (payNow) {
-    db.prepare(
+    await db.prepare(
       `INSERT INTO payments (entity_type, entity_id, amount, method, status, reference, created_by)
        VALUES ('order', ?, ?, 'UPI', 'Paid', ?, ?)`
     ).run(result.lastInsertRowid, service.price, `BOOK-${code}`, user.id);
   }
 
-  db.prepare(
+  await db.prepare(
     `INSERT INTO tickets (code, title, description, client_id, site_id, priority, status, created_by, updated_at)
      VALUES (?, ?, ?, ?, ?, 'Normal', 'Unassigned', ?, datetime('now'))`
   ).run(
@@ -189,10 +189,10 @@ router.post('/orders', requireAuth, (req, res) => {
     user.id
   );
 
-  db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'order', ?)`)
+  await db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'order', ?)`)
     .run(user.id, `${user.name} booked ${service.name} (${code})`, result.lastInsertRowid);
 
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(result.lastInsertRowid);
+  const order = await db.prepare('SELECT * FROM orders WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json({
     order: {
       id: order.id,

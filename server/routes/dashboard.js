@@ -4,28 +4,28 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', requireAuth, (req, res) => {
-  const openTickets = db.prepare(`SELECT COUNT(*) AS c FROM tickets WHERE status IN ('Unassigned','Assigned','On the way','In progress')`).get().c;
-  const activeWork = db.prepare(`SELECT COUNT(*) AS c FROM site_works WHERE status = 'ACTIVE'`).get().c;
-  const resolvedMonth = db.prepare(`
+router.get('/', requireAuth, async (req, res) => {
+  const openTickets = (await db.prepare(`SELECT COUNT(*) AS c FROM tickets WHERE status IN ('Unassigned','Assigned','On the way','In progress')`).get()).c;
+  const activeWork = (await db.prepare(`SELECT COUNT(*) AS c FROM site_works WHERE status = 'ACTIVE'`).get()).c;
+  const resolvedMonth = (await db.prepare(`
     SELECT COUNT(*) AS c FROM tickets
     WHERE status IN ('Resolved','Closed')
       AND strftime('%Y-%m', updated_at) = strftime('%Y-%m', 'now')
-  `).get().c;
-  const fieldOnline = db.prepare(`
+  `).get()).c;
+  const fieldOnline = (await db.prepare(`
     SELECT COUNT(*) AS c FROM users WHERE role = 'resource' AND availability != 'Offline'
-  `).get().c;
-  const fieldTotal = db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'resource'`).get().c;
-  const unassigned = db.prepare(`SELECT COUNT(*) AS c FROM tickets WHERE status = 'Unassigned'`).get().c;
-  const assignedOpen = db.prepare(`SELECT COUNT(*) AS c FROM tickets WHERE status IN ('Assigned','On the way','In progress')`).get().c;
+  `).get()).c;
+  const fieldTotal = (await db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'resource'`).get()).c;
+  const unassigned = (await db.prepare(`SELECT COUNT(*) AS c FROM tickets WHERE status = 'Unassigned'`).get()).c;
+  const assignedOpen = (await db.prepare(`SELECT COUNT(*) AS c FROM tickets WHERE status IN ('Assigned','On the way','In progress')`).get()).c;
 
-  const activity = db.prepare(`
+  const activity = (await db.prepare(`
     SELECT a.*, u.name, u.initials, u.avatar_color
     FROM activity_log a
     LEFT JOIN users u ON u.id = a.user_id
     ORDER BY a.created_at DESC
     LIMIT 10
-  `).all().map((a) => ({
+  `).all()).map((a) => ({
     id: a.id,
     message: a.message,
     name: a.name,
@@ -34,14 +34,14 @@ router.get('/', requireAuth, (req, res) => {
     createdAt: a.created_at
   }));
 
-  const works = db.prepare(`
+  const works = (await db.prepare(`
     SELECT w.*, c.name AS client_name, c.location AS client_location, s.name AS site_name
     FROM site_works w
     LEFT JOIN clients c ON c.id = w.client_id
     LEFT JOIN sites s ON s.id = w.site_id
     WHERE w.status = 'ACTIVE'
     ORDER BY w.due_date
-  `).all().map((w) => ({
+  `).all()).map((w) => ({
     id: w.id,
     client: w.client_name,
     title: w.title,
@@ -53,8 +53,8 @@ router.get('/', requireAuth, (req, res) => {
 
   let resource = null;
   if (req.user.role === 'resource') {
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-    const myTickets = db.prepare(`
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const myTickets = await db.prepare(`
       SELECT t.*, c.name AS client_name, s.name AS site_name, t.description
       FROM tickets t
       LEFT JOIN clients c ON c.id = t.client_id
@@ -83,11 +83,11 @@ router.get('/', requireAuth, (req, res) => {
 
   let customer = null;
   if (req.user.role === 'customer') {
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     const client = user.client_id
-      ? db.prepare('SELECT * FROM clients WHERE id = ?').get(user.client_id)
+      ? await db.prepare('SELECT * FROM clients WHERE id = ?').get(user.client_id)
       : null;
-    const feedback = db.prepare(`
+    const feedback = await db.prepare(`
       SELECT AVG(rating) AS avg_rating, COUNT(*) AS count
       FROM feedback WHERE customer_user_id = ?
     `).get(user.id);
@@ -101,13 +101,13 @@ router.get('/', requireAuth, (req, res) => {
     };
   }
 
-  const amcDue = db
+  const amcDue = (await db
     .prepare(
       `SELECT id, name, location, amc_expires, amc_status FROM clients
        WHERE amc_expires IS NOT NULL AND date(amc_expires) <= date('now', '+45 day')
        ORDER BY amc_expires LIMIT 10`
     )
-    .all()
+    .all())
     .map((c) => ({
       id: c.id,
       name: c.name,
@@ -116,15 +116,15 @@ router.get('/', requireAuth, (req, res) => {
       status: c.amc_status
     }));
 
-  const lowStock = db
+  const lowStock = (await db
     .prepare(
       `SELECT COUNT(*) AS c FROM materials m
        LEFT JOIN inventory_stock s ON s.material_id = m.id
        WHERE m.active = 1 AND COALESCE(s.qty, 0) <= 50`
     )
-    .get().c;
+    .get()).c;
 
-  const pendingClaims = db.prepare(`SELECT COUNT(*) AS c FROM salary_claims WHERE status = 'Pending'`).get().c;
+  const pendingClaims = (await db.prepare(`SELECT COUNT(*) AS c FROM salary_claims WHERE status = 'Pending'`).get()).c;
 
   res.json({
     stats: {
@@ -147,9 +147,9 @@ router.get('/', requireAuth, (req, res) => {
   });
 });
 
-router.post('/evidence', requireAuth, requireRoleSafe, (req, res) => {
+router.post('/evidence', requireAuth, requireRoleSafe, async (req, res) => {
   const { siteWorkId, ticketId, latitude, longitude, notes, capturedAt } = req.body || {};
-  const result = db.prepare(`
+  const result = await db.prepare(`
     INSERT INTO work_evidence (site_work_id, ticket_id, user_id, captured_at, latitude, longitude, notes)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -163,13 +163,13 @@ router.post('/evidence', requireAuth, requireRoleSafe, (req, res) => {
   );
 
   if (siteWorkId) {
-    db.prepare(`UPDATE site_works SET progress = 100, status = 'COMPLETED' WHERE id = ?`).run(siteWorkId);
+    await db.prepare(`UPDATE site_works SET progress = 100, status = 'COMPLETED' WHERE id = ?`).run(siteWorkId);
   }
   if (ticketId) {
-    db.prepare(`UPDATE tickets SET status = 'Resolved', updated_at = datetime('now') WHERE id = ?`).run(ticketId);
+    await db.prepare(`UPDATE tickets SET status = 'Resolved', updated_at = datetime('now') WHERE id = ?`).run(ticketId);
   }
 
-  db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'evidence', ?)`)
+  await db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'evidence', ?)`)
     .run(req.user.id, `${req.user.name} submitted site completion evidence`, result.lastInsertRowid);
 
   res.status(201).json({ ok: true, id: result.lastInsertRowid });

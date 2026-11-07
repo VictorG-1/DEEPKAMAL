@@ -5,8 +5,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
-  const people = db.prepare(`
+router.get('/', requireAuth, requireRole('admin', 'manager'), async (_req, res) => {
+  const people = (await db.prepare(`
     SELECT id, name, email, role, initials, avatar_color, job_title, team, availability, daily_wage,
            kyc_identity, kyc_bank, kyc_consent, kyc_status, wage_balance, claims_this_month
     FROM users
@@ -14,7 +14,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
     ORDER BY
       CASE role WHEN 'admin' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END,
       name
-  `).all().map((u) => ({
+  `).all()).map((u) => ({
     id: u.id,
     name: u.name,
     email: u.email || '',
@@ -37,7 +37,7 @@ router.get('/', requireAuth, requireRole('admin', 'manager'), (_req, res) => {
   res.json({ people });
 });
 
-router.post('/', requireAuth, requireRole('admin'), (req, res) => {
+router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
   const { name, email, password, role, jobTitle, team, dailyWage } = req.body || {};
   if (!name || !email || !password) {
     return res.status(400).json({ error: 'Name, email and password are required' });
@@ -45,7 +45,7 @@ router.post('/', requireAuth, requireRole('admin'), (req, res) => {
   const safeRole = ['resource', 'manager', 'admin'].includes(role) ? role : 'resource';
   const initials = name.split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
   try {
-    const result = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO users (email, password_hash, name, role, initials, job_title, team, daily_wage)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -58,7 +58,7 @@ router.post('/', requireAuth, requireRole('admin'), (req, res) => {
       team || null,
       dailyWage || 0
     );
-    const user = db.prepare('SELECT id, name, email, role, initials, job_title, team, daily_wage, availability FROM users WHERE id = ?').get(result.lastInsertRowid);
+    const user = await db.prepare('SELECT id, name, email, role, initials, job_title, team, daily_wage, availability FROM users WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json({ person: user });
   } catch (err) {
     if (String(err.message).includes('UNIQUE')) {
@@ -68,11 +68,11 @@ router.post('/', requireAuth, requireRole('admin'), (req, res) => {
   }
 });
 
-router.patch('/:id/kyc', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.patch('/:id/kyc', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const { identity, bank, consent, status } = req.body || {};
-  const user = db.prepare('SELECT id FROM users WHERE id = ? AND role = ?').get(req.params.id, 'resource');
+  const user = await db.prepare('SELECT id FROM users WHERE id = ? AND role = ?').get(req.params.id, 'resource');
   if (!user) return res.status(404).json({ error: 'Resource not found' });
-  db.prepare(`
+  await db.prepare(`
     UPDATE users SET
       kyc_identity = COALESCE(?, kyc_identity),
       kyc_bank = COALESCE(?, kyc_bank),

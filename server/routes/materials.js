@@ -22,7 +22,7 @@ function mapMaterial(m) {
   };
 }
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   const q = String(req.query.q || '').trim();
   const category = String(req.query.category || '').trim();
   const color = String(req.query.color || '').trim();
@@ -42,14 +42,14 @@ router.get('/', requireAuth, (req, res) => {
     params.push(like, like, like, like, like, like);
   }
   sql += ` ORDER BY category, sort_order, name`;
-  const rows = db.prepare(sql).all(...params);
+  const rows = await db.prepare(sql).all(...params);
 
-  const categories = db
+  const categories = (await db
     .prepare(`SELECT category, COUNT(*) AS count FROM materials WHERE active = 1 GROUP BY category ORDER BY category`)
-    .all()
+    .all())
     .map((c) => ({ name: c.category, count: c.count }));
 
-  const colors = db
+  const colors = await db
     .prepare(
       `SELECT color_name AS name, color_hex AS hex, COUNT(*) AS count
        FROM materials WHERE active = 1 AND color_name IS NOT NULL
@@ -61,7 +61,7 @@ router.get('/', requireAuth, (req, res) => {
 });
 
 // Public SVG label endpoints (no JWT — used for print/img tags)
-router.get('/barcode/:code', (req, res) => {
+router.get('/barcode/:code', async (req, res) => {
   const raw = String(req.params.code || '').replace(/\.svg$/i, '');
   const code = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!code) return res.status(400).json({ error: 'code required' });
@@ -70,24 +70,24 @@ router.get('/barcode/:code', (req, res) => {
   res.send(svgBarcode(code.startsWith('DK') ? code : `DK${code}`));
 });
 
-router.get('/:id/barcode', (req, res) => {
-  const row = db.prepare('SELECT * FROM materials WHERE id = ?').get(req.params.id);
+router.get('/:id/barcode', async (req, res) => {
+  const row = await db.prepare('SELECT * FROM materials WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Material not found' });
   const code = row.barcode || toBarcode(row.sku);
-  if (!row.barcode) db.prepare('UPDATE materials SET barcode = ? WHERE id = ?').run(code, row.id);
+  if (!row.barcode) await db.prepare('UPDATE materials SET barcode = ? WHERE id = ?').run(code, row.id);
   res.setHeader('Content-Type', 'image/svg+xml');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.send(svgBarcode(code));
 });
 
-router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
+router.post('/', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
   const { sku, category, name, unit, rate, gstPct, description, colorName, colorHex } = req.body || {};
   if (!sku || !category || !name) {
     return res.status(400).json({ error: 'sku, category and name are required' });
   }
   try {
     const barcode = toBarcode(sku);
-    const result = db
+    const result = await db
       .prepare(
         `INSERT INTO materials (sku, category, name, unit, rate, gst_pct, description, color_name, color_hex, barcode, active, sort_order)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 9999)`
@@ -104,7 +104,7 @@ router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
         colorHex || null,
         barcode
       );
-    const row = db.prepare('SELECT * FROM materials WHERE id = ?').get(result.lastInsertRowid);
+    const row = await db.prepare('SELECT * FROM materials WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json({ material: mapMaterial(row) });
   } catch (err) {
     if (String(err.message).includes('UNIQUE')) {
@@ -114,11 +114,11 @@ router.post('/', requireAuth, requireRole('admin', 'manager'), (req, res) => {
   }
 });
 
-router.patch('/:id', requireAuth, requireRole('admin', 'manager'), (req, res) => {
-  const row = db.prepare('SELECT * FROM materials WHERE id = ?').get(req.params.id);
+router.patch('/:id', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const row = await db.prepare('SELECT * FROM materials WHERE id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Material not found' });
   const { name, unit, rate, gstPct, description, active, category, colorName, colorHex } = req.body || {};
-  db.prepare(
+  await db.prepare(
     `UPDATE materials SET
       name = COALESCE(?, name),
       unit = COALESCE(?, unit),
@@ -142,7 +142,8 @@ router.patch('/:id', requireAuth, requireRole('admin', 'manager'), (req, res) =>
     active === undefined ? null : active ? 1 : 0,
     row.id
   );
-  res.json({ material: mapMaterial(db.prepare('SELECT * FROM materials WHERE id = ?').get(row.id)) });
+  const updated = await db.prepare('SELECT * FROM materials WHERE id = ?').get(row.id);
+  res.json({ material: mapMaterial(updated) });
 });
 
 module.exports = router;

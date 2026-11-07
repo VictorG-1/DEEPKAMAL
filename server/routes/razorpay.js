@@ -15,7 +15,7 @@ function cfg() {
   };
 }
 
-router.get('/status', requireAuth, (_req, res) => {
+router.get('/status', requireAuth, async (_req, res) => {
   const c = cfg();
   res.json({
     enabled: c.enabled,
@@ -27,7 +27,7 @@ router.get('/status', requireAuth, (_req, res) => {
   });
 });
 
-router.post('/order', requireAuth, (req, res) => {
+router.post('/order', requireAuth, async (req, res) => {
   const { entityType, entityId, amount } = req.body || {};
   const amt = Number(amount);
   if (!['quotation', 'invoice', 'order'].includes(entityType) || !(amt > 0)) {
@@ -35,7 +35,7 @@ router.post('/order', requireAuth, (req, res) => {
   }
   const c = cfg();
   const receipt = `DK-${entityType}-${entityId}-${Date.now()}`;
-  const local = db
+  const local = await db
     .prepare(
       `INSERT INTO payments (entity_type, entity_id, amount, method, status, reference, notes, created_by)
        VALUES (?, ?, ?, 'Razorpay', 'Pending', ?, ?, ?)`
@@ -71,7 +71,7 @@ router.post('/order', requireAuth, (req, res) => {
     .then(async (r) => {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error?.description || 'Razorpay order failed');
-      db.prepare(`UPDATE payments SET reference = ? WHERE id = ?`).run(data.id, local.lastInsertRowid);
+      await db.prepare(`UPDATE payments SET reference = ? WHERE id = ?`).run(data.id, local.lastInsertRowid);
       res.status(201).json({
         demo: false,
         paymentId: local.lastInsertRowid,
@@ -85,9 +85,9 @@ router.post('/order', requireAuth, (req, res) => {
     .catch((err) => res.status(502).json({ error: err.message }));
 });
 
-router.post('/confirm', requireAuth, (req, res) => {
+router.post('/confirm', requireAuth, async (req, res) => {
   const { paymentId, razorpayPaymentId, razorpayOrderId, razorpaySignature } = req.body || {};
-  const pay = db.prepare('SELECT * FROM payments WHERE id = ?').get(paymentId);
+  const pay = await db.prepare('SELECT * FROM payments WHERE id = ?').get(paymentId);
   if (!pay) return res.status(404).json({ error: 'Payment not found' });
   const c = cfg();
 
@@ -101,29 +101,29 @@ router.post('/confirm', requireAuth, (req, res) => {
     }
   }
 
-  db.prepare(`UPDATE payments SET status = 'Paid', reference = COALESCE(?, reference) WHERE id = ?`).run(
+  await db.prepare(`UPDATE payments SET status = 'Paid', reference = COALESCE(?, reference) WHERE id = ?`).run(
     razorpayPaymentId || pay.reference,
     pay.id
   );
 
   if (pay.entity_type === 'quotation') {
-    const q = db.prepare('SELECT * FROM quotations WHERE id = ?').get(pay.entity_id);
+    const q = await db.prepare('SELECT * FROM quotations WHERE id = ?').get(pay.entity_id);
     if (q) {
       const paid = Math.round((Number(q.amount_paid || 0) + Number(pay.amount)) * 100) / 100;
-      db.prepare(`UPDATE quotations SET amount_paid = ? WHERE id = ?`).run(paid, q.id);
+      await db.prepare(`UPDATE quotations SET amount_paid = ? WHERE id = ?`).run(paid, q.id);
     }
   } else if (pay.entity_type === 'invoice') {
-    const inv = db.prepare('SELECT * FROM invoices WHERE id = ?').get(pay.entity_id);
+    const inv = await db.prepare('SELECT * FROM invoices WHERE id = ?').get(pay.entity_id);
     if (inv) {
       const paid = Math.round((Number(inv.amount_paid || 0) + Number(pay.amount)) * 100) / 100;
       const status = paid >= Number(inv.amount) ? 'Paid' : 'Partial';
-      db.prepare(`UPDATE invoices SET amount_paid = ?, status = ? WHERE id = ?`).run(paid, status, inv.id);
+      await db.prepare(`UPDATE invoices SET amount_paid = ?, status = ? WHERE id = ?`).run(paid, status, inv.id);
     }
   } else if (pay.entity_type === 'order') {
-    const o = db.prepare('SELECT * FROM orders WHERE id = ?').get(pay.entity_id);
+    const o = await db.prepare('SELECT * FROM orders WHERE id = ?').get(pay.entity_id);
     if (o) {
       const paid = Math.round((Number(o.amount_paid || 0) + Number(pay.amount)) * 100) / 100;
-      db.prepare(`UPDATE orders SET amount_paid = ?, payment_status = ? WHERE id = ?`).run(
+      await db.prepare(`UPDATE orders SET amount_paid = ?, payment_status = ? WHERE id = ?`).run(
         paid,
         paid >= Number(o.amount) ? 'Paid' : 'Partial',
         o.id
