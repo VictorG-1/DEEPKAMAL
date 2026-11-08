@@ -3,12 +3,12 @@
  * Vercel requires DATABASE_URL → Supabase Postgres (SQLite is ephemeral on serverless).
  */
 const path = require('path');
-const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 
 const db = require('./db');
 const { ready: seedReady } = require('./seed');
+const { uploadsDir: resolveUploadsDir, publicDir: resolvePublicDir, isServerless } = require('./lib/paths');
 
 const authRoutes = require('./routes/auth');
 const ticketRoutes = require('./routes/tickets');
@@ -40,25 +40,22 @@ const { status: supabaseStatus } = require('./lib/supabase');
 
 const app = express();
 
-// Express 4: forward rejected promises from async route handlers to error middleware
-const Layer = require('express/lib/router/layer');
-const _handle = Layer.prototype.handle_request;
-Layer.prototype.handle_request = function patchedHandle(req, res, next) {
-  const ret = _handle.call(this, req, res, next);
-  if (ret && typeof ret.catch === 'function') ret.catch(next);
-  return ret;
-};
-
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-const publicDir = path.join(__dirname, '..', 'public');
+const uploadsDir = resolveUploadsDir();
+const publicDir = resolvePublicDir();
 
 app.use(cors());
 app.use(async (req, res, next) => {
+  // Health must work even if seed is still running / failed (Vercel cold start)
+  if (req.path === '/api/health' || req.path === '/api/health/') return next();
   try {
     await seedReady;
     next();
   } catch (e) {
+    console.error('Seed gate error:', e.message || e);
+    if (isServerless) {
+      // Prefer serving the app; DB routes may still work if tables are already seeded
+      return next();
+    }
     next(e);
   }
 });
@@ -72,25 +69,45 @@ app.get('/favicon.ico', (_req, res) => {
 app.use(express.static(publicDir));
 
 app.get('/api/health', async (_req, res) => {
-  const users = Number((await db.prepare('SELECT COUNT(*) AS c FROM users').get()).c);
-  const services = Number((await db.prepare('SELECT COUNT(*) AS c FROM services').get()).c);
-  res.json({
-    ok: true,
-    service: 'DeepKamal API',
-    time: new Date().toISOString(),
-    database: db.dbPath,
-    driver: db.driver || (db.USE_PG ? 'postgres' : 'sqlite'),
-    users,
-    services,
-    supabase: supabaseStatus(),
-    host: process.env.VERCEL
-      ? 'vercel'
-      : process.env.RENDER
-        ? 'render'
-        : process.env.RAILWAY_ENVIRONMENT
-          ? 'railway'
-          : 'node'
-  });
+  const host = process.env.VERCEL
+    ? 'vercel'
+    : process.env.RENDER
+      ? 'render'
+      : process.env.RAILWAY_ENVIRONMENT
+        ? 'railway'
+        : 'node';
+  try {
+    if (db.driver === 'none') {
+      return res.status(503).json({
+        ok: false,
+        service: 'DeepKamal API',
+        host,
+        error: 'DATABASE_URL missing',
+        hint: 'Add DATABASE_URL in Vercel → Settings → Environment Variables, then Redeploy.'
+      });
+    }
+    const users = Number((await db.prepare('SELECT COUNT(*) AS c FROM users').get()).c);
+    const services = Number((await db.prepare('SELECT COUNT(*) AS c FROM services').get()).c);
+    res.json({
+      ok: true,
+      service: 'DeepKamal API',
+      time: new Date().toISOString(),
+      database: db.dbPath,
+      driver: db.driver || 'unknown',
+      users,
+      services,
+      supabase: supabaseStatus(),
+      host
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      service: 'DeepKamal API',
+      host,
+      error: err.message || String(err),
+      supabase: supabaseStatus()
+    });
+  }
 });
 
 app.use('/api/auth', authRoutes);

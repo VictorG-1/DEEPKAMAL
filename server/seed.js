@@ -323,6 +323,20 @@ async function seedCustomerClient() {
 }
 
 async function seed() {
+  // On Vercel cold starts, skip full seed when data already exists (avoids timeouts)
+  if (process.env.VERCEL || process.env.SKIP_SEED === '1') {
+    try {
+      const n = Number((await db.prepare('SELECT COUNT(*) AS c FROM users').get())?.c || 0);
+      if (n > 0) {
+        console.log(`Vercel/skip-seed: ${n} users already present — skipping bootstrap`);
+        return;
+      }
+    } catch (e) {
+      console.warn('Seed pre-check failed:', e.message || e);
+      // Still try a light seed below if DB is empty / reachable
+    }
+  }
+
   await seedLogins();
   await seedStaff();
   await seedCatalog();

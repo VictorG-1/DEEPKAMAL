@@ -22,7 +22,14 @@ function loadEnvFile() {
 loadEnvFile();
 
 const DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
+const ON_VERCEL = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const USE_PG = Boolean(DATABASE_URL);
+
+if (ON_VERCEL && !USE_PG) {
+  console.error(
+    'FATAL: DATABASE_URL is required on Vercel. Set it in Project → Settings → Environment Variables.'
+  );
+}
 
 function toPgParams(sql) {
   let i = 0;
@@ -140,7 +147,14 @@ function createPgDb(pool) {
 }
 
 function createSqliteDb() {
-  const Database = require('better-sqlite3');
+  let Database;
+  try {
+    Database = require('better-sqlite3');
+  } catch (err) {
+    throw new Error(
+      'better-sqlite3 is not installed and DATABASE_URL is not set. For Vercel set DATABASE_URL; for local run: npm i better-sqlite3'
+    );
+  }
   const dataDir = process.env.DATA_DIR
     ? path.resolve(process.env.DATA_DIR)
     : path.join(__dirname, '..', 'data');
@@ -219,6 +233,29 @@ function createSqliteDb() {
   return db;
 }
 
+function createMissingConfigDb() {
+  const err = () => {
+    throw new Error(
+      'DATABASE_URL is not set. Add it in Vercel → Settings → Environment Variables (Supabase pooler URL).'
+    );
+  };
+  return {
+    driver: 'none',
+    dbPath: null,
+    prepare() {
+      return { get: err, all: err, run: err };
+    },
+    async exec() {
+      err();
+    },
+    async transaction() {
+      err();
+    },
+    checkpoint() {},
+    close() {}
+  };
+}
+
 let db;
 
 if (USE_PG) {
@@ -226,15 +263,16 @@ if (USE_PG) {
   const pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    max: process.env.VERCEL ? 1 : 5,
-    idleTimeoutMillis: process.env.VERCEL ? 1000 : 10000,
+    max: ON_VERCEL ? 1 : 5,
+    idleTimeoutMillis: ON_VERCEL ? 1000 : 10000,
     connectionTimeoutMillis: 15000
   });
   db = createPgDb(pool);
   console.log('DeepKamal DB: Postgres/Supabase');
+} else if (ON_VERCEL) {
+  db = createMissingConfigDb();
+  console.error('DeepKamal DB: missing DATABASE_URL on Vercel');
 } else {
-  // Extract SQLite migrate into companion so this file stays readable
-  // If companion missing, fall back to requiring old inline — create companion now.
   db = createSqliteDb();
   console.log('DeepKamal DB: SQLite', db.dbPath);
 }

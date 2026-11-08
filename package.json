@@ -20,7 +20,7 @@
     "db:export-supabase": "node scripts/export-supabase.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",
