@@ -204,10 +204,10 @@ function apiOfflineMessage() {
   if (isLocal) {
     return 'API offline — run npm start and open http://localhost:3000 (not VS Code Live Server).';
   }
-  if (/vercel\.app$/i.test(host) || /vercel\.app\./i.test(host)) {
-    return 'Vercel cannot run DeepKamal’s SQLite API. Deploy on Render/Railway (see render.yaml), then open that URL.';
+  if (/vercel\.app$/i.test(host) || host.includes('vercel.app')) {
+    return 'API offline on Vercel — set DATABASE_URL (Supabase pooler :6543) + JWT_SECRET, then Redeploy. Check /api/health.';
   }
-  return 'API offline — this page is static UI only. Host the full Node server (Render/Railway with npm start).';
+  return 'API offline — confirm the Node/API host is running and DATABASE_URL is set.';
 }
 
 async function checkDb() {
@@ -217,7 +217,12 @@ async function checkDb() {
     const data = await API.get('/db/status');
     state.dbInfo = data;
     if (data.ok) {
-      el.textContent = `SQLite OK · ${data.counts.users} users · ${data.counts.services} services · ${Math.round(data.sizeBytes / 1024)} KB`;
+      const engine = data.engine === 'postgres' ? 'Supabase Postgres' : 'SQLite';
+      const sizeBit =
+        data.engine === 'postgres'
+          ? 'online'
+          : `${Math.round((data.sizeBytes || 0) / 1024)} KB`;
+      el.textContent = `${engine} OK · ${data.counts.users} users · ${data.counts.services} services · ${sizeBit}`;
       el.className = 'db-status ok';
       el.title = data.path || '';
       return true;
@@ -225,8 +230,8 @@ async function checkDb() {
     el.textContent = data.error || 'Database error';
     el.className = 'db-status bad';
     return false;
-  } catch {
-    el.textContent = apiOfflineMessage();
+  } catch (err) {
+    el.textContent = err?.message || apiOfflineMessage();
     el.className = 'db-status bad';
     return false;
   }
@@ -1352,13 +1357,23 @@ function renderDatabase() {
   const c = d.counts || {};
   const sb = d.supabase || {};
   const rz = state.razorpay || {};
+  const isPg = d.engine === 'postgres';
+  const title = d.ok ? (isPg ? 'Supabase Postgres connected' : 'SQLite connected') : 'Database error';
+  const sizeLabel = isPg ? 'Hosted Postgres' : 'File size';
+  const sizeValue = isPg ? 'Supabase' : `${Math.round((d.sizeBytes || 0) / 1024)} KB`;
+  const sizeHint = isPg
+    ? 'Live data on Supabase (Vercel-ready)'
+    : 'data/deepkamal.db · backups in data/backups';
+  const footer = isPg
+    ? 'Primary store is <strong>Supabase Postgres</strong>. Vercel uses <code>DATABASE_URL</code> (transaction pooler :6543). Local SQLite is only a fallback when DATABASE_URL is unset.'
+    : 'Primary store is SQLite on this machine. Set <code>DATABASE_URL</code> for Vercel / Supabase.';
   return `
     <div class="panel ${d.ok ? '' : 'bad-panel'}">
-      <div class="panel-h"><div><h2>${d.ok ? 'SQLite connected' : 'Database error'}</h2><p>${esc(d.path || '')}</p></div>${badge(d.ok ? 'Online' : 'Offline')}</div>
+      <div class="panel-h"><div><h2>${title}</h2><p>${esc(d.path || '')}</p></div>${badge(d.ok ? 'Online' : 'Offline')}</div>
       <div class="list">
         <div class="row"><div><strong>Engine</strong><small>${esc(d.engine)} via ${esc(d.driver)}</small></div><span>${esc(d.journalMode || '')}</span></div>
-        <div class="row"><div><strong>File size</strong><small>data/deepkamal.db · backups in data/backups</small></div><strong>${Math.round((d.sizeBytes || 0) / 1024)} KB</strong></div>
-        <div class="row"><div><strong>Supabase</strong><small>${esc(sb.note || 'Optional hosted DB')}</small></div>${badge(sb.enabled ? 'Configured' : 'SQLite only')}</div>
+        <div class="row"><div><strong>${sizeLabel}</strong><small>${sizeHint}</small></div><strong>${sizeValue}</strong></div>
+        <div class="row"><div><strong>Supabase</strong><small>${esc(sb.note || '')}</small></div>${badge(sb.enabled ? (isPg ? 'Primary' : 'Configured') : 'Not set')}</div>
         <div class="row"><div><strong>Razorpay</strong><small>${esc(rz.note || 'Demo checkout without keys')}</small></div>${badge(rz.mode || 'demo')}</div>
         <div class="row"><div><strong>Nightly backup</strong><small>npm run backup:nightly · keep 30 copies in data/backups</small></div>
           <button class="btn-secondary" type="button" id="dbExportSb">Export for Supabase</button></div>
@@ -1376,7 +1391,7 @@ function renderDatabase() {
       <article class="metric"><span>Invoices</span><strong>${(state.invoices || []).length}</strong></article>
       <article class="metric"><span>Assets</span><strong>${(state.assets || []).length}</strong></article>
     </div>
-    <div class="panel"><p style="color:var(--muted);margin:0;line-height:1.5">Primary store is SQLite on this machine. Use <strong>Backup now</strong> (or <code>npm run backup</code>) before multi-device / hosted moves. Set <code>SUPABASE_URL</code> + keys in <code>.env</code> when you are ready for a hosted DB.</p></div>
+    <div class="panel"><p style="color:var(--muted);margin:0;line-height:1.5">${footer}</p></div>
   `;
 }
 
