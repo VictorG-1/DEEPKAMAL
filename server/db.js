@@ -21,7 +21,26 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-const DATABASE_URL = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
+function normalizeDatabaseUrl(raw) {
+  if (!raw) return '';
+  // Prefer Supabase Transaction pooler (6543) for serverless — session mode (5432) caps ~15 clients
+  try {
+    const u = new URL(raw);
+    if (
+      u.hostname.includes('pooler.supabase.com') &&
+      (u.port === '5432' || u.port === '')
+    ) {
+      u.port = '6543';
+    }
+    return u.toString();
+  } catch (_) {
+    return raw.replace(':5432/', ':6543/');
+  }
+}
+
+const DATABASE_URL = normalizeDatabaseUrl(
+  process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || ''
+);
 const ON_VERCEL = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const USE_PG = Boolean(DATABASE_URL);
 
@@ -263,12 +282,18 @@ if (USE_PG) {
   const pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    max: ON_VERCEL ? 1 : 5,
-    idleTimeoutMillis: ON_VERCEL ? 1000 : 10000,
-    connectionTimeoutMillis: 15000
+    // Serverless: one client per isolate; release quickly so pooler slots free up
+    max: 1,
+    min: 0,
+    idleTimeoutMillis: ON_VERCEL ? 500 : 5000,
+    connectionTimeoutMillis: 10000,
+    allowExitOnIdle: true
+  });
+  pool.on('error', (err) => {
+    console.error('Postgres pool error:', err.message || err);
   });
   db = createPgDb(pool);
-  console.log('DeepKamal DB: Postgres/Supabase');
+  console.log('DeepKamal DB: Postgres/Supabase', ON_VERCEL ? '(vercel pool max=1)' : '');
 } else if (ON_VERCEL) {
   db = createMissingConfigDb();
   console.error('DeepKamal DB: missing DATABASE_URL on Vercel');
