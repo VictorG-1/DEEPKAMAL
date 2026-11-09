@@ -7,7 +7,7 @@ const express = require('express');
 const cors = require('cors');
 
 const db = require('./db');
-const { ready: seedReady } = require('./seed');
+const seedModule = require('./seed');
 const { uploadsDir: resolveUploadsDir, publicDir: resolvePublicDir, isServerless } = require('./lib/paths');
 
 const authRoutes = require('./routes/auth');
@@ -48,14 +48,11 @@ app.use(async (req, res, next) => {
   // Health must work even if seed is still running / failed (Vercel cold start)
   if (req.path === '/api/health' || req.path === '/api/health/') return next();
   try {
-    await seedReady;
+    await seedModule.getReady();
     next();
   } catch (e) {
     console.error('Seed gate error:', e.message || e);
-    if (isServerless) {
-      // Prefer serving the app; DB routes may still work if tables are already seeded
-      return next();
-    }
+    if (isServerless) return next();
     next(e);
   }
 });

@@ -1,5 +1,6 @@
 {
   "installCommand": "npm install --omit=optional",
+  "buildCommand": "node -e \"console.log('DeepKamal build ok', process.version)\"",
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
   "functions": {
     "api/index.js": {

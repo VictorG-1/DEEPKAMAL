@@ -361,18 +361,35 @@ async function seed() {
 }
 
 
-const ready = seed().catch(async (e) => {
-  console.error('Seed failed:', e.message || e);
-  // Don't permanently block the API if core data already exists
-  try {
-    const n = Number((await db.prepare('SELECT COUNT(*) AS c FROM users').get())?.c || 0);
-    if (n > 0) {
-      console.warn(`Continuing with ${n} existing users after seed error.`);
-      return;
-    }
-  } catch (_) {
-    /* ignore */
+let readyPromise = null;
+function getReady() {
+  if (!readyPromise) {
+    readyPromise = seed().catch(async (e) => {
+      console.error('Seed failed:', e.message || e);
+      try {
+        const n = Number((await db.prepare('SELECT COUNT(*) AS c FROM users').get())?.c || 0);
+        if (n > 0) {
+          console.warn(`Continuing with ${n} existing users after seed error.`);
+          return;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      // On Vercel never permanently fail the ready gate
+      if (process.env.VERCEL) {
+        console.warn('Vercel: continuing without full seed');
+        return;
+      }
+      throw e;
+    });
   }
-  throw e;
-});
-module.exports = { ready, seed };
+  return readyPromise;
+}
+
+module.exports = {
+  get ready() {
+    return getReady();
+  },
+  seed,
+  getReady
+};
