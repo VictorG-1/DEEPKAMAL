@@ -210,12 +210,29 @@ function apiOfflineMessage() {
   return 'API offline — confirm the Node/API host is running and DATABASE_URL is set.';
 }
 
-async function checkDb() {
+async function checkDb(full = false) {
   const el = document.getElementById('dbStatus');
-  if (!el) return false;
   try {
+    // Fast path for boot: /health is one light query pair
+    if (!full) {
+      const health = await API.get('/health');
+      if (!health.ok) throw new Error(health.error || 'API unhealthy');
+      if (el) {
+        const engine = health.driver === 'postgres' ? 'Supabase Postgres' : 'DB';
+        el.textContent = `${engine} OK · ${health.users} users · ${health.services} services`;
+        el.className = 'db-status ok';
+      }
+      // Refresh full status in background (Database screen)
+      API.get('/db/status')
+        .then((data) => {
+          state.dbInfo = data;
+        })
+        .catch(() => {});
+      return true;
+    }
     const data = await API.get('/db/status');
     state.dbInfo = data;
+    if (!el) return !!data.ok;
     if (data.ok) {
       const engine = data.engine === 'postgres' ? 'Supabase Postgres' : 'SQLite';
       const sizeBit =
@@ -231,8 +248,10 @@ async function checkDb() {
     el.className = 'db-status bad';
     return false;
   } catch (err) {
-    el.textContent = err?.message || apiOfflineMessage();
-    el.className = 'db-status bad';
+    if (el) {
+      el.textContent = err?.message || apiOfflineMessage();
+      el.className = 'db-status bad';
+    }
     return false;
   }
 }
@@ -300,7 +319,9 @@ function logout() {
 
 async function loadAll() {
   const role = API.user.role;
-  const tasks = [
+
+  // Wave 1 — only what home screens need (keeps first paint fast on Vercel)
+  const first = [
     API.get('/dashboard').then((d) => (state.dashboard = d)),
     API.get('/tickets').then((d) => (state.tickets = d.tickets)),
     API.get('/services/catalog')
@@ -313,23 +334,56 @@ async function loadAll() {
         state.services = d.services || [];
         state.categories = [];
       }),
-    API.get('/services/orders').then((d) => (state.orders = d.orders))
+    API.get('/services/orders').then((d) => (state.orders = d.orders)).catch(() => (state.orders = []))
   ];
+
   if (role === 'admin' || role === 'manager') {
-    tasks.push(
+    first.push(
       API.get('/people').then((d) => (state.people = d.people)),
       API.get('/clients').then((d) => (state.clients = d.clients)),
-      API.get('/attendance').then((d) => {
-        state.attendance = d.attendance;
-        state.payrollTotal = d.payrollTotal;
-      }),
       API.get('/approvals').then((d) => {
         state.approvals = d.approvals || [];
         state.approvedClaims = d.approvedClaims || [];
       }),
-      API.get('/tickets/dispatch').then((d) => (state.dispatch = d)),
+      API.get('/tickets/dispatch').then((d) => (state.dispatch = d)).catch(() => {})
+    );
+  }
+  if (role === 'resource') {
+    first.push(
+      API.get('/attendance').then((d) => {
+        state.attendance = d.attendance || [];
+        state.payrollTotal = d.payrollTotal || 0;
+      })
+    );
+  }
+  if (role === 'customer') {
+    first.push(
+      API.get('/quotations')
+        .then((d) => (state.quotations = d.quotations || []))
+        .catch(() => (state.quotations = [])),
+      API.get('/invoices')
+        .then((d) => {
+          state.invoices = d.invoices || [];
+          state.receivables = d.receivables || 0;
+        })
+        .catch(() => {
+          state.invoices = [];
+          state.receivables = 0;
+        })
+    );
+  }
+
+  await Promise.all(first);
+
+  // Wave 2 — heavier lists after UI is usable
+  if (role === 'admin' || role === 'manager') {
+    const second = [
+      API.get('/attendance').then((d) => {
+        state.attendance = d.attendance;
+        state.payrollTotal = d.payrollTotal;
+      }),
       API.get('/works')
-        .then((d) => (state.works = d.works))
+        .then((d) => (state.works = d.works || []))
         .catch(() => (state.works = state.dashboard?.works || [])),
       API.get('/quotations').then((d) => (state.quotations = d.quotations || [])),
       API.get('/materials').then((d) => {
@@ -343,9 +397,6 @@ async function loadAll() {
       API.get('/inventory/movements')
         .then((d) => (state.movements = d.movements || []))
         .catch(() => (state.movements = [])),
-      API.get('/works')
-        .then((d) => (state.works = d.works || []))
-        .catch(() => {}),
       API.get('/feedback')
         .then((d) => {
           state.feedback = d.feedback || [];
@@ -385,37 +436,16 @@ async function loadAll() {
       API.get('/razorpay/status')
         .then((d) => (state.razorpay = d))
         .catch(() => (state.razorpay = { mode: 'demo' }))
-    );
-  }
-  if (role === 'admin') {
-    tasks.push(API.get('/banks').then((d) => (state.banks = d.accounts || [])).catch(() => (state.banks = [])));
-  }
-  if (role === 'resource') {
-    tasks.push(
-      API.get('/tickets').then((d) => (state.tickets = d.tickets)),
-      API.get('/attendance').then((d) => {
-        state.attendance = d.attendance || [];
-        state.payrollTotal = d.payrollTotal || 0;
+    ];
+    if (role === 'admin') {
+      second.push(API.get('/banks').then((d) => (state.banks = d.accounts || [])).catch(() => (state.banks = [])));
+    }
+    Promise.all(second)
+      .then(() => {
+        if (document.body.classList.contains('in-app')) render();
       })
-    );
+      .catch(() => {});
   }
-  if (role === 'customer') {
-    tasks.push(
-      API.get('/quotations')
-        .then((d) => (state.quotations = d.quotations || []))
-        .catch(() => (state.quotations = [])),
-      API.get('/invoices')
-        .then((d) => {
-          state.invoices = d.invoices || [];
-          state.receivables = d.receivables || 0;
-        })
-        .catch(() => {
-          state.invoices = [];
-          state.receivables = 0;
-        })
-    );
-  }
-  await Promise.all(tasks);
 }
 
 function setChrome() {

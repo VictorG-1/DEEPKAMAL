@@ -7,23 +7,54 @@ const { status: supabaseStatus } = require('../lib/supabase');
 
 const router = express.Router();
 
+async function count(sql) {
+  return Number((await db.prepare(sql).get()).c);
+}
+
 async function snapshot() {
+  const [
+    users,
+    services,
+    categories,
+    tickets,
+    orders,
+    clients,
+    attendance,
+    people,
+    materials,
+    quotations,
+    invoices,
+    assets,
+    vendors
+  ] = await Promise.all([
+    count('SELECT COUNT(*) AS c FROM users'),
+    count('SELECT COUNT(*) AS c FROM services'),
+    count('SELECT COUNT(*) AS c FROM service_categories'),
+    count('SELECT COUNT(*) AS c FROM tickets'),
+    count('SELECT COUNT(*) AS c FROM orders'),
+    count('SELECT COUNT(*) AS c FROM clients'),
+    count('SELECT COUNT(*) AS c FROM attendance'),
+    count(`SELECT COUNT(*) AS c FROM users WHERE role IN ('admin','manager','resource')`),
+    count('SELECT COUNT(*) AS c FROM materials'),
+    count('SELECT COUNT(*) AS c FROM quotations'),
+    count('SELECT COUNT(*) AS c FROM invoices'),
+    count('SELECT COUNT(*) AS c FROM site_assets'),
+    count('SELECT COUNT(*) AS c FROM vendors')
+  ]);
   const counts = {
-    users: Number((await db.prepare('SELECT COUNT(*) AS c FROM users').get()).c),
-    services: Number((await db.prepare('SELECT COUNT(*) AS c FROM services').get()).c),
-    categories: Number((await db.prepare('SELECT COUNT(*) AS c FROM service_categories').get()).c),
-    tickets: Number((await db.prepare('SELECT COUNT(*) AS c FROM tickets').get()).c),
-    orders: Number((await db.prepare('SELECT COUNT(*) AS c FROM orders').get()).c),
-    clients: Number((await db.prepare('SELECT COUNT(*) AS c FROM clients').get()).c),
-    attendance: Number((await db.prepare('SELECT COUNT(*) AS c FROM attendance').get()).c),
-    people: Number(
-      (await db.prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('admin','manager','resource')`).get()).c
-    ),
-    materials: Number((await db.prepare('SELECT COUNT(*) AS c FROM materials').get()).c),
-    quotations: Number((await db.prepare('SELECT COUNT(*) AS c FROM quotations').get()).c),
-    invoices: Number((await db.prepare('SELECT COUNT(*) AS c FROM invoices').get()).c),
-    assets: Number((await db.prepare('SELECT COUNT(*) AS c FROM site_assets').get()).c),
-    vendors: Number((await db.prepare('SELECT COUNT(*) AS c FROM vendors').get()).c)
+    users,
+    services,
+    categories,
+    tickets,
+    orders,
+    clients,
+    attendance,
+    people,
+    materials,
+    quotations,
+    invoices,
+    assets,
+    vendors
   };
 
   if (db.driver === 'postgres') {

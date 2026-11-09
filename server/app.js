@@ -45,14 +45,14 @@ const publicDir = resolvePublicDir();
 
 app.use(cors());
 app.use(async (req, res, next) => {
-  // Health must work even if seed is still running / failed (Vercel cold start)
+  // Skip seed gate on Vercel / health — seed is a local bootstrap only
+  if (isServerless) return next();
   if (req.path === '/api/health' || req.path === '/api/health/') return next();
   try {
     await seedModule.getReady();
     next();
   } catch (e) {
     console.error('Seed gate error:', e.message || e);
-    if (isServerless) return next();
     next(e);
   }
 });
