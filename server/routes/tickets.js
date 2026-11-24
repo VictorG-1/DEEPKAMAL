@@ -43,7 +43,14 @@ function mapTicket(t) {
 
 function relativeTime(iso) {
   if (!iso) return '—';
-  const diff = Date.now() - new Date(String(iso).replace(' ', 'T') + 'Z').getTime();
+  const raw = String(iso).trim();
+  // Postgres may return "YYYY-MM-DD HH:MM:SS" or ISO with timezone
+  let parsed = Date.parse(raw);
+  if (Number.isNaN(parsed) && /^\d{4}-\d{2}-\d{2} /.test(raw)) {
+    parsed = Date.parse(raw.replace(' ', 'T') + '+05:30');
+  }
+  if (Number.isNaN(parsed)) return '—';
+  const diff = Date.now() - parsed;
   const mins = Math.round(diff / 60000);
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins} min ago`;

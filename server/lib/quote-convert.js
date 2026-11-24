@@ -3,9 +3,9 @@ const { moveStock } = require('./inventory');
 
 async function nextTicketCode() {
   const row = await db
-    .prepare(`SELECT MAX(CAST(REPLACE(code, 'DK-', '') AS INTEGER)) AS n FROM tickets WHERE code GLOB 'DK-[0-9]*'`)
+    .prepare(`SELECT MAX(CAST(REPLACE(code, 'DK-', '') AS INTEGER)) AS n FROM tickets WHERE code LIKE 'DK-%'`)
     .get();
-  return `DK-${(row?.n || 2900) + 1}`;
+  return `DK-${Number(row?.n || 2900) + 1}`;
 }
 
 /** Convert approved quotation → ticket + site work + material issue */

@@ -546,3 +546,34 @@ th { color: var(--muted); font-size: .72rem; letter-spacing: .06em; text-transfo
 @media (min-width: 961px) {
   .tabbar { display: none !important; }
 }
+
+/* Global busy indicator */
+.busy-bar {
+  position: fixed;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(11, 31, 51, 0.92);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(11, 31, 51, 0.28);
+  font-size: 0.9rem;
+  font-weight: 600;
+  pointer-events: none;
+}
+.busy-bar span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  animation: dkspin 0.7s linear infinite;
+}
+.busy-bar em { font-style: normal; font-weight: 600; }
+body.is-busy { cursor: progress; }
+@keyframes dkspin { to { transform: rotate(360deg); } }

@@ -282,8 +282,8 @@ if (USE_PG) {
   const pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    // Serverless: one client per isolate; release quickly so pooler slots free up
-    max: 1,
+    // Serverless: one client per isolate; local/dev can use a small pool
+    max: ON_VERCEL ? 1 : 5,
     min: 0,
     idleTimeoutMillis: ON_VERCEL ? 500 : 5000,
     connectionTimeoutMillis: 10000,

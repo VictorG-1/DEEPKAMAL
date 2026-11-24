@@ -40,6 +40,15 @@ const { status: supabaseStatus } = require('./lib/supabase');
 
 const app = express();
 
+// Express 4: catch async route rejections so one bad query doesn't kill the process
+const Layer = require('express/lib/router/layer');
+const _layerHandle = Layer.prototype.handle_request;
+Layer.prototype.handle_request = function handleRequestPatched(req, res, next) {
+  const ret = _layerHandle.call(this, req, res, next);
+  if (ret && typeof ret.catch === 'function') ret.catch(next);
+  return ret;
+};
+
 const uploadsDir = resolveUploadsDir();
 const publicDir = resolvePublicDir();
 

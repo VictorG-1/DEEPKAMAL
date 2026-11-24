@@ -138,10 +138,125 @@ const NAV = {
 
 function toast(msg) {
   const el = document.getElementById('toast');
+  if (!el) return;
   el.textContent = msg;
   el.hidden = false;
   clearTimeout(toast._t);
   toast._t = setTimeout(() => (el.hidden = true), 2600);
+}
+
+function setBusy(on, label) {
+  document.body.classList.toggle('is-busy', !!on);
+  let bar = document.getElementById('busyBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'busyBar';
+    bar.className = 'busy-bar';
+    bar.innerHTML = '<span></span><em id="busyLabel"></em>';
+    document.body.appendChild(bar);
+  }
+  const lab = document.getElementById('busyLabel');
+  if (lab) lab.textContent = label || 'Loading…';
+  bar.hidden = !on;
+}
+
+async function ensureViewData(view) {
+  const role = API.user?.role;
+  const tasks = [];
+  try {
+    if (view === 'dispatch' && (role === 'admin' || role === 'manager')) {
+      tasks.push(API.get('/tickets/dispatch').then((d) => (state.dispatch = d)));
+      tasks.push(API.get('/tickets').then((d) => (state.tickets = d.tickets)).catch(() => {}));
+    }
+    if (view === 'tickets') {
+      tasks.push(API.get('/tickets').then((d) => (state.tickets = d.tickets)));
+    }
+    if (view === 'attendance') {
+      tasks.push(
+        API.get('/attendance').then((d) => {
+          state.attendance = d.attendance || [];
+          state.payrollTotal = d.payrollTotal || 0;
+        })
+      );
+      if (role === 'admin' || role === 'manager') {
+        tasks.push(API.get('/people').then((d) => (state.people = d.people)).catch(() => {}));
+      }
+    }
+    if (view === 'quotations' || String(view).startsWith('quote')) {
+      tasks.push(API.get('/quotations').then((d) => (state.quotations = d.quotations || [])).catch(() => {}));
+      if (!state.materials?.length) {
+        tasks.push(
+          API.get('/materials')
+            .then((d) => {
+              state.materials = d.materials || [];
+              state.materialCategories = d.categories || [];
+              state.materialColors = d.colors || [];
+            })
+            .catch(() => {})
+        );
+      }
+    }
+    if (view === 'inventory' || view === 'materials') {
+      tasks.push(
+        API.get('/materials')
+          .then((d) => {
+            state.materials = d.materials || [];
+            state.materialCategories = d.categories || [];
+            state.materialColors = d.colors || [];
+          })
+          .catch(() => {})
+      );
+      tasks.push(API.get('/inventory').then((d) => (state.inventory = d.stock || [])).catch(() => {}));
+    }
+    if (view === 'assets' || view === 'amc') {
+      tasks.push(API.get('/assets').then((d) => (state.assets = d.assets || [])).catch(() => {}));
+      tasks.push(API.get('/amc/visits').then((d) => (state.amcVisits = d.visits || [])).catch(() => {}));
+    }
+    if (view === 'invoices') {
+      tasks.push(
+        API.get('/invoices')
+          .then((d) => {
+            state.invoices = d.invoices || [];
+            state.receivables = d.receivables || 0;
+          })
+          .catch(() => {})
+      );
+    }
+    if (view === 'procurement') {
+      tasks.push(API.get('/vendors').then((d) => (state.vendors = d.vendors || [])).catch(() => {}));
+      tasks.push(API.get('/vendors/orders').then((d) => (state.purchaseOrders = d.orders || [])).catch(() => {}));
+    }
+    if (view === 'costing') {
+      tasks.push(API.get('/costing').then((d) => (state.jobCosts = d.costs || [])).catch(() => (state.jobCosts = [])));
+    }
+    if (view === 'approvals') {
+      tasks.push(
+        API.get('/approvals').then((d) => {
+          state.approvals = d.approvals || [];
+          state.approvedClaims = d.approvedClaims || [];
+        })
+      );
+    }
+    if (view === 'database') {
+      tasks.push(checkDb(true));
+    }
+    if (tasks.length) await Promise.all(tasks);
+  } catch (err) {
+    console.warn('ensureViewData', view, err);
+    toast(err.message || 'Could not refresh this screen');
+  }
+}
+
+async function goView(view) {
+  state.view = view;
+  document.getElementById('side')?.classList.remove('open');
+  setBusy(true, 'Updating…');
+  try {
+    await ensureViewData(view);
+  } finally {
+    setBusy(false);
+  }
+  render();
 }
 
 function badge(status) {
@@ -257,12 +372,17 @@ async function checkDb(full = false) {
 }
 
 async function doLogin(email, password, errorEl) {
-  const data = await API.post('/auth/login', {
-    email: String(email || '').trim(),
-    password: String(password || '')
-  });
-  API.setSession(data.token, data.user);
-  await enterApp();
+  setBusy(true, 'Signing in…');
+  try {
+    const data = await API.post('/auth/login', {
+      email: String(email || '').trim(),
+      password: String(password || '')
+    });
+    API.setSession(data.token, data.user);
+    await enterApp();
+  } finally {
+    setBusy(false);
+  }
 }
 
 document.querySelectorAll('.quick-login').forEach((btn) => {
@@ -468,9 +588,7 @@ function setChrome() {
   nav.querySelectorAll('[data-view]').forEach((a) => {
     a.onclick = (e) => {
       e.preventDefault();
-      state.view = a.dataset.view;
-      document.getElementById('side').classList.remove('open');
-      render();
+      goView(a.dataset.view);
     };
   });
 
@@ -500,10 +618,7 @@ function setChrome() {
       )
       .join('');
     tab.querySelectorAll('[data-view]').forEach((b) => {
-      b.onclick = () => {
-        state.view = b.dataset.view;
-        render();
-      };
+      b.onclick = () => goView(b.dataset.view);
     });
   } else {
     tab.hidden = true;
@@ -1740,8 +1855,12 @@ function bindScreen() {
   document.getElementById('dbBackup')?.addEventListener('click', async () => {
     try {
       const data = await API.post('/db/backup');
-      toast(`Backup saved (${Math.round(data.sizeBytes / 1024)} KB)`);
-      if (data.supabase) state.dbInfo = { ...state.dbInfo, supabase: data.supabase };
+      if (data.note) toast(data.note);
+      else if (data.sizeBytes != null) toast(`Backup saved (${Math.round(data.sizeBytes / 1024)} KB)`);
+      else toast('Backup OK');
+      if (data.status) state.dbInfo = data.status;
+      else if (data.supabase) state.dbInfo = { ...state.dbInfo, supabase: data.supabase };
+      render();
     } catch (err) {
       toast(err.message);
     }
@@ -2137,6 +2256,7 @@ function render() {
 async function enterApp() {
   showAppOnly();
   state.view = 'home';
+  setBusy(true, 'Loading your workspace…');
   try {
     await Promise.all([loadAll(), checkDb()]);
     if (window.DKOffline) {
@@ -2146,24 +2266,33 @@ async function enterApp() {
   } catch (err) {
     console.error(err);
     toast(err.message || 'Loaded with some data errors');
+  } finally {
+    setBusy(false);
   }
   render();
   if (API.user?.mustChangePassword) {
     setTimeout(() => {
       toast('Set your own password on Account');
-      state.view = 'account';
-      render();
+      goView('account');
     }, 400);
   }
 }
 
 async function boot() {
   showLoginOnly();
-  const online = await checkDb();
+  setBusy(true, 'Connecting…');
+  let online = false;
+  for (let i = 0; i < 3 && !online; i++) {
+    online = await checkDb();
+    if (!online) await new Promise((r) => setTimeout(r, 700 * (i + 1)));
+  }
+  setBusy(false);
   if (!online) {
-    API.clearSession();
     const err = document.getElementById('loginError');
-    if (err && !err.textContent) err.textContent = 'Waiting for API…';
+    if (err && !err.textContent) {
+      err.textContent = apiOfflineMessage() + ' — tap Owner again after the API wakes.';
+    }
+    // Keep session; user can retry login when API is up
     return;
   }
   if (API.token && API.user) {
