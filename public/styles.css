@@ -984,7 +984,7 @@ tbody tr:hover { background: #f8fafc; }
   background: rgba(255, 255, 255, 0.94);
   border-top: 1px solid var(--line);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   padding: 8px 6px calc(8px + env(safe-area-inset-bottom));
   z-index: 20;
   backdrop-filter: blur(10px);

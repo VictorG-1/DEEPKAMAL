@@ -123,7 +123,6 @@ const NAV = {
   ],
   resource: [
     ['home', 'Jobs'],
-    ['attendance', 'Attendance'],
     ['orders', 'Bookings'],
     ['account', 'Account']
   ],
@@ -673,7 +672,6 @@ function setChrome() {
           ]
         : [
             ['home', '▦', 'Jobs'],
-            ['attendance', '◷', 'Attendance'],
             ['orders', '▤', 'Bookings'],
             ['account', '♙', 'Account']
           ];
@@ -949,26 +947,16 @@ function renderPartnerHome() {
   document.getElementById('eyebrow').textContent = 'Partner app';
   document.getElementById('title').textContent = 'My jobs';
   document.getElementById('topCta').innerHTML = `
-    <button class="btn-primary" type="button" id="markSelfPresent">Present today</button>
     <button class="btn-secondary" type="button" id="claimBtn">Claim wages</button>`;
   const d = state.dashboard?.resource || {};
   const mine = state.attendance?.find((a) => Number(a.id) === Number(API.user.id));
-  const todayStatus = mine?.today || 'Not marked';
   const jobs =
     (d.activeJobs && d.activeJobs.length
       ? d.activeJobs
       : state.tickets.filter((t) => !['Resolved', 'Closed', 'Unassigned'].includes(t.status))) || [];
 
   return `
-    <div class="partner-earn"><span>Wage balance (from attendance)</span><strong>${money(d.wageBalance || mine?.wageBalance || 0)}</strong></div>
-    <div class="panel">
-      <div class="panel-h"><div><h2>Today's attendance</h2><p>Mark before you start jobs</p></div>${badge(todayStatus)}</div>
-      <div class="partner-att-actions job-actions">
-        <button class="btn-primary" type="button" data-att-self="Present">Present today</button>
-        <button class="btn-secondary" type="button" data-att-self="Half day">Half day</button>
-        <button class="btn-secondary" type="button" data-att-self="Absent">Absent</button>
-      </div>
-    </div>
+    <div class="partner-earn"><span>Wage balance</span><strong>${money(d.wageBalance || mine?.wageBalance || 0)}</strong></div>
     <div class="panel">
       <div class="panel-h"><div><h2>Assigned to you</h2><p>Start → On the way → Complete with GPS</p></div></div>
       ${
@@ -1441,31 +1429,11 @@ function renderAttendance() {
   document.getElementById('topCta').innerHTML = isOps
     ? `<button class="btn-secondary" type="button" id="markAllHalf">Mark all half-day</button>
        <button class="btn-primary" type="button" id="markAllPresent">Mark all present</button>`
-    : `<button class="btn-primary" type="button" id="markSelfPresent">Mark me present</button>`;
+    : '';
 
   if (API.user.role === 'resource') {
-    const mine = state.attendance?.find((a) => Number(a.id) === Number(API.user.id));
-    return `
-      <div class="panel">
-        <div class="panel-h"><div><h2>Mark your attendance</h2><p>Today · saved to payroll</p></div>${badge(mine?.today || 'Not marked')}</div>
-        <p class="muted" style="margin:0 0 10px">Present / Half day requires GPS check-in on this device.</p>
-        <div class="partner-att-actions job-actions">
-          <button class="btn-primary" type="button" data-att-self="Present">Present today</button>
-          <button class="btn-secondary" type="button" data-att-self="Half day">Half day</button>
-          <button class="btn-secondary" type="button" data-att-self="Absent">Absent</button>
-        </div>
-        ${
-          mine?.geo
-            ? `<p class="muted" style="margin:12px 0 0">GPS ${Number(mine.geo.latitude).toFixed(5)}, ${Number(mine.geo.longitude).toFixed(5)} · ${esc(mine.geo.checkInAt || '')}</p>`
-            : ''
-        }
-      </div>
-      <div class="metrics">
-        <article class="metric"><span>Today</span><strong>${esc(mine?.today || 'Not marked')}</strong></article>
-        <article class="metric"><span>Days this month</span><strong>${mine?.days ?? 0}</strong></article>
-        <article class="metric"><span>Wage balance</span><strong>${money(mine?.wageBalance || 0)}</strong></article>
-        <article class="metric"><span>Payable</span><strong>${money(mine?.payable || 0)}</strong></article>
-      </div>`;
+    state.view = 'home';
+    return renderPartnerHome();
   }
 
   if (!state.attendance.length) {
