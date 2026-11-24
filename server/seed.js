@@ -322,11 +322,76 @@ async function seedCustomerClient() {
   await db.prepare(`UPDATE users SET client_id = ? WHERE id = ?`).run(clientId, user.id);
 }
 
+async function seedSampleTickets() {
+  const existing = Number((await db.prepare('SELECT COUNT(*) AS c FROM tickets').get())?.c || 0);
+  if (existing > 0) return;
+
+  // Ensure at least one client/site for ticket FKs
+  let client = await db.prepare('SELECT id FROM clients ORDER BY id LIMIT 1').get();
+  if (!client) {
+    const clientId = (
+      await db
+        .prepare(
+          `INSERT INTO clients (name, location, address, phone, email, contact_person, sites_count, amc_status)
+           VALUES (?, ?, ?, ?, ?, ?, 1, 'Active AMC')`
+        )
+        .run('Sample Client', 'Mumbai', 'Andheri', '9999999999', 'sample@deepkamal.in', 'Contact')
+    ).lastInsertRowid;
+    await db
+      .prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, 'Primary site', ?, 'Mumbai')`)
+      .run(clientId, 'Andheri');
+    client = { id: clientId };
+  }
+  let site = await db.prepare('SELECT id FROM sites WHERE client_id = ? LIMIT 1').get(client.id);
+  if (!site) {
+    const siteId = (
+      await db.prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, 'Primary site', ?, 'Mumbai')`).run(
+        client.id,
+        'Andheri'
+      )
+    ).lastInsertRowid;
+    site = { id: siteId };
+  }
+
+  const partner = await db.prepare(`SELECT id FROM users WHERE role = 'resource' ORDER BY id LIMIT 1`).get();
+  const manager = await db.prepare(`SELECT id FROM users WHERE role IN ('admin','manager') ORDER BY id LIMIT 1`).get();
+  const createdBy = manager?.id || 1;
+  const assignee = partner?.id || null;
+
+  const samples = [
+    ['DK-2901', 'Fire alarm panel fault — Zone 2', 'Zone 2 open circuit near loading bay.', 'High', 'In progress', assignee],
+    ['DK-2902', 'MDB overheating complaint', 'Burning smell near main DB — urgent visit.', 'Critical', 'On the way', assignee],
+    ['DK-2903', 'Extinguisher refill — Lobby ABC 6kg', 'Pressure low; refill and retag.', 'Normal', 'Assigned', assignee],
+    ['DK-2904', 'Hydrant landing valve leak L2', 'Water seepage at landing valve.', 'High', 'Unassigned', null],
+    ['DK-2905', 'Emergency light battery failure', 'Corridor lights not holding charge.', 'Normal', 'In progress', assignee],
+    ['DK-2906', 'Cold store DB trip', 'Compressor feeder trips under load.', 'High', 'Assigned', assignee],
+    ['DK-2907', 'Preventive electrical AMC visit', 'Quarterly preventive panel/earthing check.', 'Normal', 'Assigned', assignee],
+    ['DK-2908', 'Smoke detector false alarm', 'Atrium detector false alarms — clean/replace.', 'Normal', 'Resolved', assignee],
+    ['DK-2909', 'Pump room control wiring check', 'Hydrant pump auto-start not engaging.', 'Critical', 'Unassigned', null],
+    ['DK-2910', 'Socket short circuit — pantry', 'Pantry socket sparking — isolate and replace.', 'High', 'Closed', assignee],
+    ['DK-2911', 'DG AMF panel indication fault', 'Mains-fail lamp stuck ON.', 'Normal', 'In progress', assignee],
+    ['DK-2912', 'Extinguisher installation survey', 'Survey for additional extinguishers on mezzanine.', 'Normal', 'Unassigned', null]
+  ];
+
+  const ins = db.prepare(
+    `INSERT INTO tickets (code, title, description, client_id, site_id, assigned_user_id, priority, status, created_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+  );
+  for (const [code, title, description, priority, status, assigned] of samples) {
+    await ins.run(code, title, description, client.id, site.id, assigned, priority, status, createdBy);
+  }
+  console.log(`Seeded ${samples.length} sample tickets`);
+}
+
 async function seed() {
-  // Vercel: never bootstrap on request path — data is already in Supabase.
-  // A COUNT round-trip here adds latency to every cold start.
+  // Vercel: skip heavy bootstrap — but still add sample tickets if table empty
   if (process.env.VERCEL || process.env.SKIP_SEED === '1') {
-    console.log('Vercel/skip-seed: bootstrap skipped');
+    try {
+      await seedSampleTickets();
+    } catch (e) {
+      console.warn('Sample ticket seed skipped:', e.message || e);
+    }
+    console.log('Vercel/skip-seed: heavy bootstrap skipped');
     return;
   }
 
@@ -338,6 +403,7 @@ async function seed() {
   await seedBanks();
   await seedCustomerClient();
   await seedVendorsAndAssets();
+  await seedSampleTickets();
   const newPins = await ensurePartnerPins();
   const materials = (await db.prepare('SELECT COUNT(*) AS c FROM materials WHERE active = 1').get()).c;
   const coloured = (await db.prepare(`SELECT COUNT(*) AS c FROM materials WHERE active = 1 AND color_name IS NOT NULL`).get()).c;

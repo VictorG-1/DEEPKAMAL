@@ -8,10 +8,15 @@ const STATUSES = ['Unassigned', 'Assigned', 'On the way', 'In progress', 'Resolv
 const OPEN_STATUSES = ['Unassigned', 'Assigned', 'On the way', 'In progress'];
 
 async function nextTicketCode() {
+  // Works on both SQLite and Postgres (avoid SQLite-only GLOB)
   const row = await db
-    .prepare(`SELECT MAX(CAST(REPLACE(code, 'DK-', '') AS INTEGER)) AS n FROM tickets WHERE code GLOB 'DK-[0-9]*'`)
+    .prepare(
+      `SELECT MAX(CAST(REPLACE(code, 'DK-', '') AS INTEGER)) AS n
+       FROM tickets
+       WHERE code LIKE 'DK-%'`
+    )
     .get();
-  return `DK-${(row?.n || 2900) + 1}`;
+  return `DK-${Number(row?.n || 2900) + 1}`;
 }
 
 function mapTicket(t) {
