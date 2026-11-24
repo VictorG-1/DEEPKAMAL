@@ -9,6 +9,7 @@ const esc = (v) =>
 const PASSWORD = 'DeepKamal@1';
 const state = {
   view: 'home',
+  navHistory: [],
   categoryId: 'all',
   categories: [],
   services: [],
@@ -247,16 +248,62 @@ async function ensureViewData(view) {
   }
 }
 
-async function goView(view) {
-  state.view = view;
+function updateBackButton() {
+  const btn = document.getElementById('backBtn');
+  if (!btn) return;
+  const canBack = state.navHistory.length > 0 || !document.getElementById('sheet')?.hidden;
+  btn.hidden = !canBack;
+  btn.disabled = !canBack;
+}
+
+function pushHistory(fromView) {
+  if (!fromView) return;
+  const last = state.navHistory[state.navHistory.length - 1];
+  if (last === fromView) return;
+  state.navHistory.push(fromView);
+  if (state.navHistory.length > 40) state.navHistory.shift();
+}
+
+async function goView(view, opts = {}) {
+  const next = view || 'home';
+  const { replace = false, skipHistory = false, silent = false } = opts;
+  if (!skipHistory && !replace && state.view && state.view !== next) {
+    pushHistory(state.view);
+  }
+  if (replace) {
+    // keep stack as-is (e.g. after login landing on home)
+  }
+  state.view = next;
   document.getElementById('side')?.classList.remove('open');
-  setBusy(true, 'Updating…');
+  if (!silent) setBusy(true, 'Updating…');
   try {
-    await ensureViewData(view);
+    await ensureViewData(next);
   } finally {
-    setBusy(false);
+    if (!silent) setBusy(false);
+  }
+  try {
+    history.pushState({ view: next, dk: 1 }, '', `#${next}`);
+  } catch (_) {
+    /* ignore */
   }
   render();
+}
+
+async function goBack() {
+  const sheet = document.getElementById('sheet');
+  if (sheet && !sheet.hidden) {
+    closeSheet();
+    updateBackButton();
+    return;
+  }
+  if (!state.navHistory.length) {
+    if (state.view !== 'home') {
+      await goView('home', { skipHistory: true });
+    }
+    return;
+  }
+  const prev = state.navHistory.pop();
+  await goView(prev || 'home', { skipHistory: true });
 }
 
 function badge(status) {
@@ -277,6 +324,7 @@ function openSheet(html) {
 }
 function closeSheet() {
   document.getElementById('sheet').hidden = true;
+  updateBackButton();
 }
 document.getElementById('sheetClose').onclick = closeSheet;
 document.getElementById('sheet').addEventListener('click', (e) => {
@@ -436,6 +484,25 @@ function logout() {
     render();
   });
   document.getElementById('menuBtn').onclick = () => document.getElementById('side').classList.toggle('open');
+  document.getElementById('backBtn').onclick = () => goBack();
+  window.addEventListener('popstate', (e) => {
+    if (!document.body.classList.contains('in-app')) return;
+    const sheet = document.getElementById('sheet');
+    if (sheet && !sheet.hidden) {
+      closeSheet();
+      updateBackButton();
+      return;
+    }
+    if (state.navHistory.length) {
+      const prev = state.navHistory.pop();
+      state.view = prev || 'home';
+      ensureViewData(state.view).finally(() => render());
+      return;
+    }
+    if (e.state?.view && e.state.view !== state.view) {
+      goView(e.state.view, { skipHistory: true, silent: true });
+    }
+  });
 
 async function loadAll() {
   const role = API.user.role;
@@ -654,8 +721,7 @@ function bookService(service) {
       closeSheet();
       toast(`Booked ${data.order.code}`);
       await loadAll();
-      state.view = 'orders';
-      render();
+      goView('orders');
     } catch (err) {
       toast(err.message);
     }
@@ -1545,8 +1611,8 @@ function bindScreen() {
     btn.onclick = () => {
       state.categoryId = btn.dataset.cat;
       if (state.view === 'home' && API.user.role === 'customer') {
-        // filter on home via services view semantics
-        state.view = 'services';
+        goView('services');
+        return;
       }
       render();
     };
@@ -1563,10 +1629,7 @@ function bindScreen() {
     };
   });
   document.getElementById('newTicket')?.addEventListener('click', createTicket);
-  document.getElementById('goDispatch')?.addEventListener('click', () => {
-    state.view = 'dispatch';
-    render();
-  });
+  document.getElementById('goDispatch')?.addEventListener('click', () => goView('dispatch'));
   document.getElementById('addClient')?.addEventListener('click', addClient);
   document.getElementById('addSvc')?.addEventListener('click', addService);
   document.getElementById('markAllPresent')?.addEventListener('click', () => markAttendanceAll('Present'));
@@ -1584,14 +1647,12 @@ function bindScreen() {
     if (state.clients[0]) applyClientToMeta(state.clients[0].id);
     state.materialCategory = 'all';
     state.materialQuery = '';
-    state.view = 'quote-new';
-    render();
+    goView('quote-new');
   });
   document.getElementById('cancelQuote')?.addEventListener('click', () => {
-    state.view = 'quotations';
     state.quoteViewId = null;
     state.quoteDetail = null;
-    render();
+    goBack();
   });
   document.getElementById('saveQuote')?.addEventListener('click', () => saveQuotation('Sent'));
   document.getElementById('saveQuoteDraft')?.addEventListener('click', () => saveQuotation('Draft'));
@@ -1681,8 +1742,7 @@ function bindScreen() {
         state.quoteViewId = data.quotation.id;
         const idx = state.quotations.findIndex((q) => q.id === data.quotation.id);
         if (idx >= 0) state.quotations[idx] = data.quotation;
-        state.view = 'quote-detail';
-        render();
+        goView('quote-detail');
       } catch (err) {
         toast(err.message);
       }
@@ -1959,8 +2019,7 @@ function createTicket() {
     closeSheet();
     toast('Ticket saved — assign from Dispatch');
     await loadAll();
-    state.view = 'dispatch';
-    render();
+    goView('dispatch');
   };
 }
 
@@ -2213,8 +2272,7 @@ async function saveQuotation(status = 'Sent') {
     await loadAll();
     state.quoteDetail = data.quotation;
     state.quoteViewId = data.quotation.id;
-    state.view = 'quote-detail';
-    render();
+    goView('quote-detail');
   } catch (err) {
     toast(err.message);
   }
@@ -2222,6 +2280,7 @@ async function saveQuotation(status = 'Sent') {
 
 function render() {
   setChrome();
+  updateBackButton();
   const role = API.user.role;
   const root = document.getElementById('screen');
   if (state.view === 'account') root.innerHTML = renderAccount();
@@ -2255,6 +2314,7 @@ function render() {
 
 async function enterApp() {
   showAppOnly();
+  state.navHistory = [];
   state.view = 'home';
   setBusy(true, 'Loading your workspace…');
   try {
@@ -2268,6 +2328,11 @@ async function enterApp() {
     toast(err.message || 'Loaded with some data errors');
   } finally {
     setBusy(false);
+  }
+  try {
+    history.replaceState({ view: 'home', dk: 1 }, '', '#home');
+  } catch (_) {
+    /* ignore */
   }
   render();
   if (API.user?.mustChangePassword) {
