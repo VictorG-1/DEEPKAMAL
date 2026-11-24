@@ -321,6 +321,7 @@ function badge(status) {
 function openSheet(html) {
   document.getElementById('sheetBody').innerHTML = html;
   document.getElementById('sheet').hidden = false;
+  updateBackButton();
 }
 function closeSheet() {
   document.getElementById('sheet').hidden = true;
@@ -479,9 +480,7 @@ function logout() {
   document.getElementById('side')?.querySelector('.side-user')?.addEventListener('click', (e) => {
     if (e.target.closest('#logoutBtn')) return;
     if (!API.user) return;
-    state.view = 'account';
-    document.getElementById('side').classList.remove('open');
-    render();
+    goView('account');
   });
   document.getElementById('menuBtn').onclick = () => document.getElementById('side').classList.toggle('open');
   document.getElementById('backBtn').onclick = () => goBack();

@@ -309,9 +309,8 @@ window.DKExtras = {
       try {
         const data = await API.post(`/invoices/from-quotation/${state.quoteViewId}`);
         toast(`Invoice ${data.invoice.code} created`);
-        state.view = 'invoices';
         await loadAll();
-        render();
+        goView('invoices');
       } catch (err) {
         toast(err.message);
       }
@@ -579,8 +578,7 @@ window.DKExtras = {
       closeSheet();
       toast('Site work created');
       await loadAll();
-      state.view = 'works';
-      render();
+      goView('works');
     };
   },
 
