@@ -99,9 +99,10 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 function hqCoords() {
+  // Default: Borivali Chikuwadi (Mumbai ops)
   return {
-    lat: Number(process.env.DEEPKAMAL_HQ_LAT || 28.4595),
-    lng: Number(process.env.DEEPKAMAL_HQ_LNG || 77.0266)
+    lat: Number(process.env.DEEPKAMAL_HQ_LAT || 19.2305),
+    lng: Number(process.env.DEEPKAMAL_HQ_LNG || 72.847)
   };
 }
 
@@ -112,6 +113,8 @@ const CITY_COORDS = {
   delhi: [28.6139, 77.209],
   noida: [28.5355, 77.391],
   mumbai: [19.076, 72.8777],
+  borivali: [19.2305, 72.847],
+  chikuwadi: [19.2305, 72.847],
   thane: [19.2183, 72.9781],
   pune: [18.5204, 73.8567]
 };
@@ -167,9 +170,11 @@ router.get('/dispatch', requireAuth, requireRole('admin', 'manager'), async (_re
       availability: p.availability,
       jobTitle: p.job_title,
       team: p.team,
-      activeJobs: p.active_jobs,
-      lat: p.home_lat,
-      lng: p.home_lng
+      activeJobs: Number(p.active_jobs || 0),
+      lat: p.home_lat != null ? Number(p.home_lat) : null,
+      lng: p.home_lng != null ? Number(p.home_lng) : null,
+      area: p.home_lat != null ? 'Chikuwadi · Borivali W' : null,
+      live: p.home_lat != null
     }));
 
   res.json({

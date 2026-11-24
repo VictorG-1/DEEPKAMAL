@@ -710,7 +710,7 @@ function renderDispatch() {
       <article class="metric"><span>Partners</span><strong>${partners.length}</strong></article>
     </div>
     <div class="panel">
-      <div class="panel-h"><div><h2>Live map · ETA</h2><p>Open jobs from HQ · city traffic estimate</p></div></div>
+      <div class="panel-h"><div><h2>Live map · Chikuwadi</h2><p>Partners + open jobs around Borivali West · orange = HQ · green = partner · blue/red = job</p></div></div>
       <div id="dispatchMap" class="dispatch-map"></div>
       <div class="list" style="margin-top:12px">${mapJobs
         .slice(0, 12)

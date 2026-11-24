@@ -83,32 +83,52 @@ window.DKField = {
       el._map.remove();
       el._map = null;
     }
-    const map = L.map(el).setView([hq?.lat || 28.46, hq?.lng || 77.03], 11);
+    const defaultCenter = [hq?.lat || 19.2305, hq?.lng || 72.847];
+    const map = L.map(el).setView(defaultCenter, 15);
     el._map = map;
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap',
       maxZoom: 18
     }).addTo(map);
-    if (hq) {
-      L.circleMarker([hq.lat, hq.lng], { radius: 9, color: '#0b1f33', fillColor: '#f97316', fillOpacity: 1 })
+    const bounds = [];
+    if (hq?.lat != null && hq?.lng != null) {
+      L.circleMarker([hq.lat, hq.lng], { radius: 10, color: '#0b1f33', fillColor: '#f97316', fillOpacity: 1 })
         .addTo(map)
-        .bindPopup('DeepKamal HQ');
+        .bindPopup('<strong>DeepKamal HQ</strong><br/>Chikuwadi · Borivali West');
+      bounds.push([hq.lat, hq.lng]);
     }
     (jobs || []).forEach((j) => {
-      if (!j.map) return;
+      if (!j.map || j.map.lat == null || j.map.lng == null) return;
       const color = j.priority === 'Critical' ? '#b91c1c' : j.priority === 'High' ? '#c2410c' : '#0369a1';
       L.circleMarker([j.map.lat, j.map.lng], { radius: 8, color, fillColor: color, fillOpacity: 0.85 })
         .addTo(map)
         .bindPopup(
           `<strong>${esc(j.code)}</strong><br/>${esc(j.title)}<br/>ETA ${esc(j.map.etaLabel)} · ${j.map.kmFromHq} km<br/>${esc(j.status)}`
         );
+      bounds.push([j.map.lat, j.map.lng]);
     });
     (partners || []).forEach((p) => {
       if (p.lat == null || p.lng == null) return;
-      L.circleMarker([p.lat, p.lng], { radius: 6, color: '#15803d', fillColor: '#86efac', fillOpacity: 1 })
+      const live = p.availability || 'Available';
+      L.circleMarker([p.lat, p.lng], {
+        radius: 7,
+        color: '#15803d',
+        fillColor: live.toLowerCase().includes('site') || live.toLowerCase().includes('way') ? '#22c55e' : '#86efac',
+        fillOpacity: 1
+      })
         .addTo(map)
-        .bindPopup(`Partner · ${esc(p.name)}`);
+        .bindPopup(
+          `<strong>${esc(p.name)}</strong><br/>Live · ${esc(p.area || 'Chikuwadi · Borivali W')}<br/>${esc(live)}${p.activeJobs ? `<br/>${p.activeJobs} active job(s)` : ''}`
+        );
+      bounds.push([p.lat, p.lng]);
     });
+    if (bounds.length > 1) {
+      try {
+        map.fitBounds(bounds, { padding: [36, 36], maxZoom: 16 });
+      } catch (_) {
+        /* ignore */
+      }
+    }
     setTimeout(() => map.invalidateSize(), 80);
   }
 };
