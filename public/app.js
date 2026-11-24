@@ -734,6 +734,7 @@ function renderCustomerHome() {
   const popular = state.services.slice(0, 6);
   return `
     <div class="hero-customer">
+      <p class="eyebrow" style="color:#fdba74;margin-bottom:10px">DeepKamal</p>
       <h2>Home services for electrical & fire safety</h2>
       <p>Choose a service, pick a slot, and DeepKamal dispatches a verified partner.</p>
     </div>
@@ -827,14 +828,22 @@ function renderOpsHome() {
     <button class="btn-primary" type="button" id="newTicket">+ Ticket</button>`;
   const open = state.tickets.filter((t) => !['Resolved', 'Closed'].includes(t.status));
   const amc = d.amcDue || [];
+  const online = `${d.stats.fieldOnline || 0}/${d.stats.fieldTotal || 0}`;
   return `
+    <div class="welcome-strip">
+      <div>
+        <h2>DeepKamal field desk</h2>
+        <p>Tickets, AMC, and live dispatch for Borivali Chikuwadi — assign partners before jobs stall.</p>
+      </div>
+      <div class="live-dot">${esc(online)} partners live</div>
+    </div>
     <div class="metrics">
       <article class="metric"><span>Open tickets</span><strong>${d.stats.openTickets || 0}</strong></article>
       <article class="metric"><span>Unassigned</span><strong>${d.stats.unassigned || 0}</strong></article>
       <article class="metric"><span>AMC due</span><strong>${d.stats.amcDue || 0}</strong></article>
       <article class="metric"><span>Low stock</span><strong>${d.stats.lowStock || 0}</strong></article>
       <article class="metric"><span>Claims</span><strong>${d.stats.pendingClaims || 0}</strong></article>
-      <article class="metric"><span>Team online</span><strong>${d.stats.fieldOnline || 0}/${d.stats.fieldTotal || 0}</strong></article>
+      <article class="metric"><span>Team online</span><strong>${esc(online)}</strong></article>
     </div>
     <div class="panel">
       <div class="panel-h"><div><h2>Needs attention</h2><p>Assign from Dispatch</p></div></div>

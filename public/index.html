@@ -12,8 +12,8 @@
     <link rel="manifest" href="app.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=18" />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css?v=19" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   </head>
   <body>
@@ -21,8 +21,9 @@
     <div id="loginScreen" class="login">
       <div class="login-hero">
         <img src="deepkamal-logo-cropped.png" alt="DeepKamal" class="login-logo" />
-        <h1>Book trusted electrical & fire-safety experts</h1>
-        <p>Like a modern services marketplace — for DeepKamal jobs, partners, and customers.</p>
+        <p class="login-brand">DeepKamal</p>
+        <h1>Electrical & fire-safety ops, from booking to dispatch</h1>
+        <p>One workspace for customers, partners, and the Borivali field team.</p>
       </div>
       <div class="login-card">
         <h2>Sign in</h2>
@@ -91,15 +92,15 @@
     <div id="toast" class="toast" hidden></div>
     <script>
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js?v=18').catch(() => {});
+        navigator.serviceWorker.register('./sw.js?v=19').catch(() => {});
       }
     </script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    <script src="barcode.js?v=18"></script>
-    <script src="api.js?v=18"></script>
-    <script src="offline.js?v=18"></script>
-    <script src="field.js?v=18"></script>
-    <script src="extras.js?v=18"></script>
-    <script src="app.js?v=18"></script>
+    <script src="barcode.js?v=19"></script>
+    <script src="api.js?v=19"></script>
+    <script src="offline.js?v=19"></script>
+    <script src="field.js?v=19"></script>
+    <script src="extras.js?v=19"></script>
+    <script src="app.js?v=19"></script>
   </body>
 </html>
