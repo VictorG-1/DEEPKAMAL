@@ -4,6 +4,7 @@ const db = require('../db');
 const { signToken, requireAuth, requireRole } = require('../middleware/auth');
 const { starterPinFor, hashPin, verifyPin } = require('../lib/pins');
 const { issueOtp, verifyOtp } = require('../lib/otp');
+const { normalizeIndianMobile } = require('../lib/combirds-sms');
 
 const router = express.Router();
 
@@ -32,10 +33,38 @@ function publicUser(user) {
   };
 }
 
+function requireTenDigitPhone(raw) {
+  const n = normalizeIndianMobile(raw);
+  if (!n.ok) return { error: 'Enter a valid 10-digit Indian mobile number' };
+  return { phone: n.number };
+}
+
+function initialsFrom(name) {
+  return String(name || 'DK')
+    .split(/\s+/)
+    .map((p) => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || 'DK';
+}
+
 function otpTargetFor(user) {
-  if (user.phone) return { target: user.phone, channel: 'sms' };
+  if (user.phone) {
+    const n = normalizeIndianMobile(user.phone);
+    return { target: n.ok ? n.number : user.phone, channel: 'sms' };
+  }
   if (user.email) return { target: user.email, channel: 'email' };
   return null;
+}
+
+async function findUserByLogin(login) {
+  const raw = String(login || '').trim();
+  if (!raw) return null;
+  const asPhone = normalizeIndianMobile(raw);
+  if (asPhone.ok) {
+    return await db.prepare('SELECT * FROM users WHERE phone = ?').get(asPhone.number);
+  }
+  return await db.prepare('SELECT * FROM users WHERE email = ? COLLATE NOCASE').get(raw);
 }
 
 function maskTarget(target) {
@@ -48,9 +77,9 @@ function maskTarget(target) {
   return '***';
 }
 
-async function authenticateCredentials(email, password, pin) {
-  const user = await db.prepare('SELECT * FROM users WHERE email = ? COLLATE NOCASE').get(String(email).trim());
-  if (!user) return { error: 'Email or password is incorrect.' };
+async function authenticateCredentials(login, password, pin) {
+  const user = await findUserByLogin(login);
+  if (!user) return { error: 'Email / phone or password is incorrect.' };
 
   let ok = false;
   if (password && bcrypt.compareSync(String(password), user.password_hash)) ok = true;
@@ -58,33 +87,16 @@ async function authenticateCredentials(email, password, pin) {
   if (!ok && password && user.role === 'resource' && /^\d{4,6}$/.test(String(password)) && verifyPin(password, user.pin_hash)) {
     ok = true;
   }
-  if (!ok) return { error: 'Email or password / PIN is incorrect.' };
+  if (!ok) return { error: 'Email / phone or password / PIN is incorrect.' };
   return { user };
 }
 
-router.post('/login', async (req, res) => {
-  const { email, password, pin, skipOtp } = req.body || {};
-  if (!email || (!password && !pin)) {
-    return res.status(400).json({ error: 'Email and password or PIN are required' });
-  }
-
-  const auth = await authenticateCredentials(email, password, pin);
-  if (auth.error) return res.status(401).json({ error: auth.error });
-  const user = auth.user;
-
-  // Dev escape only when explicitly requested AND no SMS/email infra — still preferred path is OTP
-  if (skipOtp === true && process.env.ALLOW_SKIP_LOGIN_OTP === '1') {
-    const token = signToken(user);
-    return res.json({ token, user: publicUser(user) });
-  }
-
+async function beginLoginOtp(user, res) {
   const dest = otpTargetFor(user);
   if (!dest) {
-    // No phone/email on account — fall back to direct token (seed accounts)
     const token = signToken(user);
     return res.json({ token, user: publicUser(user), otpSkipped: true, reason: 'No phone/email on account' });
   }
-
   try {
     const issued = await issueOtp({
       purpose: 'login',
@@ -96,25 +108,47 @@ router.post('/login', async (req, res) => {
       subject: 'DeepKamal login OTP',
       bodyPrefix: 'Your DeepKamal login code is'
     });
-    res.json({
+    return res.json({
       requiresOtp: true,
       purpose: 'login',
       targetMasked: maskTarget(dest.target),
       channel: dest.channel,
       userId: user.id,
       email: user.email,
+      phone: user.phone || null,
       expiresAt: issued.expiresAt,
       ...(issued.devCode ? { devCode: issued.devCode } : {})
     });
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Could not send OTP' });
+    return res.status(500).json({ error: err.message || 'Could not send OTP' });
   }
+}
+
+router.post('/login', async (req, res) => {
+  const { email, phone, password, pin, skipOtp } = req.body || {};
+  const login = email || phone;
+  if (!login || (!password && !pin)) {
+    return res.status(400).json({ error: 'Email/phone and password or PIN are required' });
+  }
+
+  const auth = await authenticateCredentials(login, password, pin);
+  if (auth.error) return res.status(401).json({ error: auth.error });
+  const user = auth.user;
+
+  // Dev escape only when explicitly requested AND no SMS/email infra — still preferred path is OTP
+  if (skipOtp === true && process.env.ALLOW_SKIP_LOGIN_OTP === '1') {
+    const token = signToken(user);
+    return res.json({ token, user: publicUser(user) });
+  }
+
+  return beginLoginOtp(user, res);
 });
 
 router.post('/verify-login-otp', async (req, res) => {
-  const { email, code } = req.body || {};
-  if (!email || !code) return res.status(400).json({ error: 'Email and OTP are required' });
-  const user = await db.prepare('SELECT * FROM users WHERE email = ? COLLATE NOCASE').get(String(email).trim());
+  const { email, phone, code } = req.body || {};
+  const login = email || phone;
+  if (!login || !code) return res.status(400).json({ error: 'Email/phone and OTP are required' });
+  const user = await findUserByLogin(login);
   if (!user) return res.status(401).json({ error: 'Invalid session' });
 
   const dest = otpTargetFor(user);
@@ -134,28 +168,176 @@ router.post('/verify-login-otp', async (req, res) => {
 });
 
 router.post('/resend-login-otp', async (req, res) => {
-  const { email, password, pin } = req.body || {};
-  const auth = await authenticateCredentials(email, password, pin);
+  const { email, phone, password, pin } = req.body || {};
+  const auth = await authenticateCredentials(email || phone, password, pin);
   if (auth.error) return res.status(401).json({ error: auth.error });
-  const user = auth.user;
-  const dest = otpTargetFor(user);
-  if (!dest) return res.status(400).json({ error: 'No phone/email on account' });
-  const issued = await issueOtp({
-    purpose: 'login',
-    target: dest.target,
-    channel: dest.channel,
-    userId: user.id,
-    entityType: 'user',
-    entityId: user.id,
-    subject: 'DeepKamal login OTP',
-    bodyPrefix: 'Your DeepKamal login code is'
-  });
-  res.json({
-    ok: true,
-    targetMasked: maskTarget(dest.target),
-    expiresAt: issued.expiresAt,
-    ...(issued.devCode ? { devCode: issued.devCode } : {})
-  });
+  return beginLoginOtp(auth.user, res);
+});
+
+/** Customer self-registration → user + client + site profiles */
+router.post('/register/customer', async (req, res) => {
+  const { name, phone, email, password, address, city } = req.body || {};
+  if (!name || String(name).trim().length < 2) {
+    return res.status(400).json({ error: 'Full name is required' });
+  }
+  const phoneCheck = requireTenDigitPhone(phone);
+  if (phoneCheck.error) return res.status(400).json({ error: phoneCheck.error });
+  if (!password || String(password).length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+
+  const phoneNum = phoneCheck.phone;
+  const emailNorm = email
+    ? String(email).trim().toLowerCase()
+    : `c${phoneNum}@customers.deepkamal.in`;
+
+  const existingPhone = await db.prepare('SELECT id FROM users WHERE phone = ?').get(phoneNum);
+  if (existingPhone) return res.status(409).json({ error: 'This mobile is already registered' });
+  const existingEmail = await db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').get(emailNorm);
+  if (existingEmail) return res.status(409).json({ error: 'This email is already registered' });
+
+  try {
+    const clientIns = await db
+      .prepare(
+        `INSERT INTO clients (name, location, sites_count, amc_status, referral_code, phone, email, address, contact_person)
+         VALUES (?, ?, 1, 'New', ?, ?, ?, ?, ?)`
+      )
+      .run(
+        String(name).trim(),
+        city || address || null,
+        `C${phoneNum.slice(-6)}`,
+        phoneNum,
+        email ? emailNorm : null,
+        address || null,
+        String(name).trim()
+      );
+    const clientId = clientIns.lastInsertRowid;
+    await db
+      .prepare(`INSERT INTO sites (client_id, name, address, city) VALUES (?, 'Primary site', ?, ?)`)
+      .run(clientId, address || null, city || null);
+
+    const userIns = await db
+      .prepare(
+        `INSERT INTO users (
+           email, password_hash, name, role, initials, avatar_color, job_title, phone, client_id, must_change_password
+         ) VALUES (?, ?, ?, 'customer', ?, 'purple', 'Customer', ?, ?, 0)`
+      )
+      .run(
+        emailNorm,
+        bcrypt.hashSync(String(password), 10),
+        String(name).trim(),
+        initialsFrom(name),
+        phoneNum,
+        clientId
+      );
+
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(userIns.lastInsertRowid);
+    await db
+      .prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'user', ?)`)
+      .run(user.id, `Customer registered · ${phoneNum}`, user.id);
+
+    return beginLoginOtp(user, res);
+  } catch (err) {
+    if (String(err.message || '').includes('UNIQUE') || String(err.message || '').includes('unique')) {
+      return res.status(409).json({ error: 'Mobile or email already registered' });
+    }
+    return res.status(500).json({ error: err.message || 'Registration failed' });
+  }
+});
+
+/** Partner self-registration → field resource profile */
+router.post('/register/partner', async (req, res) => {
+  const { name, phone, email, password, pin, team, engagementType } = req.body || {};
+  if (!name || String(name).trim().length < 2) {
+    return res.status(400).json({ error: 'Full name is required' });
+  }
+  const phoneCheck = requireTenDigitPhone(phone);
+  if (phoneCheck.error) return res.status(400).json({ error: phoneCheck.error });
+  if (!password || String(password).length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  }
+  if (pin && !/^\d{4,6}$/.test(String(pin))) {
+    return res.status(400).json({ error: 'PIN must be 4–6 digits' });
+  }
+
+  const phoneNum = phoneCheck.phone;
+  const emailNorm = email
+    ? String(email).trim().toLowerCase()
+    : `p${phoneNum}@partners.deepkamal.in`;
+  const eng = engagementType === 'contract' ? 'contract' : 'daily_wage';
+
+  const existingPhone = await db.prepare('SELECT id FROM users WHERE phone = ?').get(phoneNum);
+  if (existingPhone) return res.status(409).json({ error: 'This mobile is already registered' });
+  const existingEmail = await db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').get(emailNorm);
+  if (existingEmail) return res.status(409).json({ error: 'This email is already registered' });
+
+  try {
+    const pinValue = pin || starterPinFor(Date.now() % 9000, name);
+    const userIns = await db
+      .prepare(
+        `INSERT INTO users (
+           email, password_hash, name, role, initials, avatar_color, job_title, team, phone,
+           daily_wage, availability, kyc_status, engagement_type, pin_hash, login_pin_hint, must_change_password
+         ) VALUES (?, ?, ?, 'resource', ?, 'green', 'Field Technician', ?, ?, 1000, 'Available', 'Pending', ?, ?, ?, 0)`
+      )
+      .run(
+        emailNorm,
+        bcrypt.hashSync(String(password), 10),
+        String(name).trim(),
+        initialsFrom(name),
+        team || 'Field',
+        phoneNum,
+        eng,
+        hashPin(pinValue),
+        `****${String(pinValue).slice(-2)}`
+      );
+
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(userIns.lastInsertRowid);
+    await db
+      .prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'user', ?)`)
+      .run(user.id, `Partner registered · ${phoneNum} · ${eng}`, user.id);
+
+    // Attach one-time PIN reveal on the OTP challenge response
+    const dest = otpTargetFor(user);
+    if (!dest) {
+      const token = signToken(user);
+      return res.status(201).json({
+        token,
+        user: publicUser(user),
+        registered: true,
+        starterPin: pin ? undefined : pinValue
+      });
+    }
+    const issued = await issueOtp({
+      purpose: 'login',
+      target: dest.target,
+      channel: dest.channel,
+      userId: user.id,
+      entityType: 'user',
+      entityId: user.id,
+      subject: 'DeepKamal login OTP',
+      bodyPrefix: 'Your DeepKamal login code is'
+    });
+    return res.status(201).json({
+      requiresOtp: true,
+      purpose: 'login',
+      targetMasked: maskTarget(dest.target),
+      channel: dest.channel,
+      userId: user.id,
+      email: user.email,
+      phone: user.phone,
+      registered: true,
+      role: 'resource',
+      starterPin: pin ? undefined : pinValue,
+      expiresAt: issued.expiresAt,
+      ...(issued.devCode ? { devCode: issued.devCode } : {})
+    });
+  } catch (err) {
+    if (String(err.message || '').includes('UNIQUE') || String(err.message || '').includes('unique')) {
+      return res.status(409).json({ error: 'Mobile or email already registered' });
+    }
+    return res.status(500).json({ error: err.message || 'Registration failed' });
+  }
 });
 
 router.get('/me', requireAuth, async (req, res) => {

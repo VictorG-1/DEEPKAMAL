@@ -92,17 +92,17 @@ async function seedLogins() {
   }
   // Demo phones so OTP login / work OTPs can deliver (WhatsApp / SMS links)
   const phones = [
-    ['owner@deepkamal.in', '919820000001'],
-    ['manager@deepkamal.in', '919820000002'],
-    ['partner@deepkamal.in', '919820000003'],
-    ['customer@deepkamal.in', '919820000004']
+    ['owner@deepkamal.in', '9820000001'],
+    ['manager@deepkamal.in', '9820000002'],
+    ['partner@deepkamal.in', '9820000003'],
+    ['customer@deepkamal.in', '9820000004']
   ];
   for (const [email, phone] of phones) {
-    await db.prepare(`UPDATE users SET phone = COALESCE(phone, ?) WHERE email = ? COLLATE NOCASE`).run(phone, email);
+    await db.prepare(`UPDATE users SET phone = ? WHERE email = ? COLLATE NOCASE`).run(phone, email);
   }
   await db
     .prepare(
-      `UPDATE clients SET phone = COALESCE(phone, '919820000004')
+      `UPDATE clients SET phone = '9820000004'
        WHERE id IN (SELECT client_id FROM users WHERE email = 'customer@deepkamal.in' COLLATE NOCASE AND client_id IS NOT NULL)`
     )
     .run();

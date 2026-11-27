@@ -493,6 +493,17 @@ module.exports = function migrateSqlite(db) {
   addCol('orders', 'advance_paid_at', 'TEXT');
   addCol('orders', 'completion_paid_at', 'TEXT');
 
+  try {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique ON users(phone) WHERE phone IS NOT NULL AND phone != ''`);
+  } catch (_) {
+    /* ignore if unsupported */
+  }
+  try {
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS clients_phone_unique ON clients(phone) WHERE phone IS NOT NULL AND phone != ''`);
+  } catch (_) {
+    /* ignore */
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS ticket_crew (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -96,6 +96,13 @@ router.patch('/:id/ops', requireAuth, requireRole('admin'), async (req, res) => 
   const eng =
     engagementType === 'contract' || engagementType === 'daily_wage' ? engagementType : user.engagement_type || 'daily_wage';
   const locked = paymentLocked === undefined ? user.payment_locked : paymentLocked ? 1 : 0;
+  let phoneNorm = null;
+  if (phone != null && String(phone).trim() !== '') {
+    const { normalizeIndianMobile } = require('../lib/combirds-sms');
+    const n = normalizeIndianMobile(phone);
+    if (!n.ok) return res.status(400).json({ error: 'Phone must be a valid 10-digit Indian mobile' });
+    phoneNorm = n.number;
+  }
   await db
     .prepare(
       `UPDATE users SET
@@ -105,7 +112,7 @@ router.patch('/:id/ops', requireAuth, requireRole('admin'), async (req, res) => 
          phone = COALESCE(?, phone)
        WHERE id = ?`
     )
-    .run(eng, locked, dailyWage != null ? Number(dailyWage) : null, phone || null, user.id);
+    .run(eng, locked, dailyWage != null ? Number(dailyWage) : null, phoneNorm, user.id);
   res.json({
     ok: true,
     engagementType: eng,

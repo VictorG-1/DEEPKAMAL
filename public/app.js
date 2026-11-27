@@ -427,13 +427,30 @@ async function checkDb(full = false) {
   }
 }
 
-async function doLogin(email, password) {
+function tenDigitPhone(raw) {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (d.startsWith('91') && d.length === 12) d = d.slice(2);
+  if (d.startsWith('0') && d.length === 11) d = d.slice(1);
+  return /^[6-9]\d{9}$/.test(d) ? d : null;
+}
+
+function bindPhoneInputs(root = document) {
+  root.querySelectorAll('input[name="phone"], input[data-phone10]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const digits = String(input.value || '').replace(/\D/g, '').slice(0, 10);
+      if (input.value !== digits) input.value = digits;
+    });
+  });
+}
+
+async function doLogin(login, password) {
   setBusy(true, 'Signing in…');
   try {
-    const data = await API.post('/auth/login', {
-      email: String(email || '').trim(),
-      password: String(password || '')
-    });
+    const loginValue = String(login || '').trim();
+    const body = { password: String(password || '') };
+    if (tenDigitPhone(loginValue)) body.phone = tenDigitPhone(loginValue);
+    else body.email = loginValue;
+    const data = await API.post('/auth/login', body);
     if (data.token && data.user) {
       API.setSession(data.token, data.user);
       await enterApp();
@@ -441,7 +458,7 @@ async function doLogin(email, password) {
     }
     if (data.requiresOtp) {
       setBusy(false);
-      await promptLoginOtp(email, password, data);
+      await promptLoginOtp(loginValue, password, data);
       return;
     }
     throw new Error('Login failed');
@@ -450,24 +467,28 @@ async function doLogin(email, password) {
   }
 }
 
-function promptLoginOtp(email, password, challenge) {
+function promptLoginOtp(login, password, challenge) {
   return new Promise((resolve, reject) => {
     openSheet(`
       <h2>Enter login OTP</h2>
-      <p class="meta">Code sent to ${esc(challenge.targetMasked || 'your phone/email')}${
-        challenge.devCode ? ` · demo code <strong>${esc(challenge.devCode)}</strong>` : ''
-      }</p>
+      <p class="meta">Code sent to ${esc(challenge.targetMasked || 'your phone')}${
+        challenge.devCode ? ` · demo <strong>${esc(challenge.devCode)}</strong>` : ''
+      }${challenge.starterPin ? ` · partner PIN <strong>${esc(challenge.starterPin)}</strong>` : ''}</p>
       <form id="loginOtpForm">
         <label>6-digit OTP<input name="code" inputmode="numeric" pattern="\\d{6}" maxlength="6" required autofocus /></label>
         <button class="btn-primary" type="submit" style="width:100%">Verify & continue</button>
       </form>`);
     if (challenge.devCode) toast(`OTP ${challenge.devCode}`);
+    if (challenge.starterPin) toast(`Partner PIN ${challenge.starterPin}`);
     document.getElementById('loginOtpForm').onsubmit = async (e) => {
       e.preventDefault();
       const code = new FormData(e.target).get('code');
       try {
         setBusy(true, 'Verifying OTP…');
-        const data = await API.post('/auth/verify-login-otp', { email, code });
+        const payload = { code };
+        if (tenDigitPhone(login)) payload.phone = tenDigitPhone(login);
+        else payload.email = login;
+        const data = await API.post('/auth/verify-login-otp', payload);
         API.setSession(data.token, data.user);
         closeSheet();
         await enterApp();
@@ -480,6 +501,19 @@ function promptLoginOtp(email, password, challenge) {
       }
     };
   });
+}
+
+async function handleRegisterResponse(data, loginHint, password) {
+  if (data.token && data.user) {
+    API.setSession(data.token, data.user);
+    await enterApp();
+    return;
+  }
+  if (data.requiresOtp) {
+    await promptLoginOtp(loginHint, password, data);
+    return;
+  }
+  throw new Error('Registration succeeded but login failed');
 }
 
 document.querySelectorAll('.quick-login').forEach((btn) => {
@@ -512,6 +546,74 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
     );
   } catch (err) {
     errorEl.textContent = err.message;
+  }
+});
+
+document.querySelectorAll('[data-reg-tab]').forEach((btn) => {
+  btn.onclick = () => {
+    document.querySelectorAll('[data-reg-tab]').forEach((b) => b.classList.toggle('active', b === btn));
+    const tab = btn.dataset.regTab;
+    document.getElementById('registerCustomerForm').hidden = tab !== 'customer';
+    document.getElementById('registerPartnerForm').hidden = tab !== 'partner';
+  };
+});
+
+bindPhoneInputs(document.getElementById('loginScreen') || document);
+
+document.getElementById('registerCustomerForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('regCustomerError');
+  errEl.textContent = '';
+  const fd = new FormData(e.target);
+  const phone = tenDigitPhone(fd.get('phone'));
+  if (!phone) {
+    errEl.textContent = 'Enter a valid 10-digit mobile starting with 6–9';
+    return;
+  }
+  try {
+    setBusy(true, 'Creating customer…');
+    const data = await API.post('/auth/register/customer', {
+      name: fd.get('name'),
+      phone,
+      email: fd.get('email') || undefined,
+      address: fd.get('address') || undefined,
+      password: fd.get('password')
+    });
+    toast('Customer profile created');
+    await handleRegisterResponse(data, phone, fd.get('password'));
+  } catch (err) {
+    errEl.textContent = err.message;
+  } finally {
+    setBusy(false);
+  }
+});
+
+document.getElementById('registerPartnerForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('regPartnerError');
+  errEl.textContent = '';
+  const fd = new FormData(e.target);
+  const phone = tenDigitPhone(fd.get('phone'));
+  if (!phone) {
+    errEl.textContent = 'Enter a valid 10-digit mobile starting with 6–9';
+    return;
+  }
+  try {
+    setBusy(true, 'Creating partner…');
+    const data = await API.post('/auth/register/partner', {
+      name: fd.get('name'),
+      phone,
+      email: fd.get('email') || undefined,
+      password: fd.get('password'),
+      pin: fd.get('pin') || undefined,
+      engagementType: fd.get('engagementType')
+    });
+    toast(data.starterPin ? `Partner created · PIN ${data.starterPin}` : 'Partner profile created');
+    await handleRegisterResponse(data, phone, fd.get('password'));
+  } catch (err) {
+    errEl.textContent = err.message;
+  } finally {
+    setBusy(false);
   }
 });
 
@@ -2214,7 +2316,7 @@ function openPartnerOps(partnerId) {
         </select>
       </label>
       <label>Daily wage ₹<input name="dailyWage" type="number" value="${Number(p.dailyWage) || 0}" /></label>
-      <label>Phone<input name="phone" value="${esc(p.phone || '')}" placeholder="91xxxxxxxxxx" /></label>
+      <label>10-digit mobile<input name="phone" data-phone10 value="${esc(p.phone || '')}" inputmode="numeric" maxlength="10" placeholder="98XXXXXXXX" /></label>
       <label class="row" style="border:0"><span><input type="checkbox" name="paymentLocked" ${p.paymentLocked ? 'checked' : ''} /> Lock partner payments</span></label>
       <button class="btn-primary" type="submit" style="width:100%">Save</button>
     </form>

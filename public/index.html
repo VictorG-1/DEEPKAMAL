@@ -13,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=21" />
+    <link rel="stylesheet" href="styles.css?v=22" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   </head>
   <body>
@@ -27,26 +27,54 @@
       </div>
       <div class="login-card">
         <h2>Sign in</h2>
-        <p class="login-sub">Owner / manager / customer: <code>DeepKamal@1</code>. Partners: email + personal <strong>PIN</strong> (Team → Reset PIN).</p>
+        <p class="login-sub">Use email or <strong>10-digit mobile</strong> + password. OTP is sent to your mobile.</p>
         <div class="cred-box">
           <button type="button" class="cred quick-login" data-email="owner@deepkamal.in" data-pass="DeepKamal@1"><strong>Owner</strong><span>owner@deepkamal.in</span></button>
           <button type="button" class="cred quick-login" data-email="manager@deepkamal.in" data-pass="DeepKamal@1"><strong>Manager</strong><span>manager@deepkamal.in</span></button>
-          <button type="button" class="cred quick-login" data-email="partner@deepkamal.in" data-pass="DeepKamal@1"><strong>Partner</strong><span>partner@deepkamal.in</span></button>
-          <button type="button" class="cred quick-login" data-email="customer@deepkamal.in" data-pass="DeepKamal@1"><strong>Customer</strong><span>customer@deepkamal.in</span></button>
+          <button type="button" class="cred quick-login" data-email="partner@deepkamal.in" data-pass="DeepKamal@1"><strong>Partner</strong><span>partner@deepkamal.in · 9820000003</span></button>
+          <button type="button" class="cred quick-login" data-email="customer@deepkamal.in" data-pass="DeepKamal@1"><strong>Customer</strong><span>customer@deepkamal.in · 9820000004</span></button>
         </div>
-        <details class="manual-login">
-          <summary>Or type email / password</summary>
+        <details class="manual-login" open>
+          <summary>Email / mobile login</summary>
           <form id="loginForm" class="login-form">
-            <label>Email ID
-              <input id="loginEmail" type="email" autocomplete="username" value="owner@deepkamal.in" required />
+            <label>Email or 10-digit mobile
+              <input id="loginEmail" type="text" inputmode="email" autocomplete="username" value="owner@deepkamal.in" required />
             </label>
-            <label>Password
+            <label>Password / partner PIN
               <input id="loginPassword" type="text" autocomplete="current-password" value="DeepKamal@1" required />
             </label>
             <p class="form-error" id="loginError" role="alert"></p>
             <button class="btn-primary" type="submit">Continue</button>
           </form>
         </details>
+        <div class="reg-tabs" role="tablist">
+          <button type="button" class="chip active" data-reg-tab="customer">New customer</button>
+          <button type="button" class="chip" data-reg-tab="partner">New partner</button>
+        </div>
+        <form id="registerCustomerForm" class="login-form reg-form">
+          <label>Full name<input name="name" required autocomplete="name" placeholder="Your name" /></label>
+          <label>10-digit mobile<input name="phone" required inputmode="numeric" pattern="[6-9][0-9]{9}" maxlength="10" placeholder="98XXXXXXXX" /></label>
+          <label>Email (optional)<input name="email" type="email" autocomplete="email" placeholder="you@email.com" /></label>
+          <label>Service address<input name="address" placeholder="Building, area, city" /></label>
+          <label>Password (min 6)<input name="password" type="password" minlength="6" required autocomplete="new-password" /></label>
+          <p class="form-error" id="regCustomerError" role="alert"></p>
+          <button class="btn-primary" type="submit">Create customer profile</button>
+        </form>
+        <form id="registerPartnerForm" class="login-form reg-form" hidden>
+          <label>Full name<input name="name" required autocomplete="name" placeholder="Technician name" /></label>
+          <label>10-digit mobile<input name="phone" required inputmode="numeric" pattern="[6-9][0-9]{9}" maxlength="10" placeholder="98XXXXXXXX" /></label>
+          <label>Email (optional)<input name="email" type="email" autocomplete="email" /></label>
+          <label>Work type
+            <select name="engagementType">
+              <option value="daily_wage">Daily wage</option>
+              <option value="contract">Contract</option>
+            </select>
+          </label>
+          <label>Password (min 6)<input name="password" type="password" minlength="6" required autocomplete="new-password" /></label>
+          <label>PIN 4–6 digits (optional)<input name="pin" inputmode="numeric" pattern="\d{4,6}" maxlength="6" placeholder="Auto if blank" /></label>
+          <p class="form-error" id="regPartnerError" role="alert"></p>
+          <button class="btn-primary" type="submit">Create partner profile</button>
+        </form>
         <p class="db-status" id="dbStatus">Checking database…</p>
       </div>
     </div>
@@ -92,15 +120,15 @@
     <div id="toast" class="toast" hidden></div>
     <script>
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./sw.js?v=21').catch(() => {});
+        navigator.serviceWorker.register('./sw.js?v=22').catch(() => {});
       }
     </script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    <script src="barcode.js?v=21"></script>
-    <script src="api.js?v=21"></script>
-    <script src="offline.js?v=21"></script>
-    <script src="field.js?v=21"></script>
-    <script src="extras.js?v=21"></script>
-    <script src="app.js?v=21"></script>
+    <script src="barcode.js?v=22"></script>
+    <script src="api.js?v=22"></script>
+    <script src="offline.js?v=22"></script>
+    <script src="field.js?v=22"></script>
+    <script src="extras.js?v=22"></script>
+    <script src="app.js?v=22"></script>
   </body>
 </html>
