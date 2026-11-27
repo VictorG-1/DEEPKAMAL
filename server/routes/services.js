@@ -147,15 +147,20 @@ router.post('/orders', requireAuth, async (req, res) => {
   }
 
   const code = await nextOrderCode();
+  // New orders: 50% advance, 50% on completion
+  const advancePct = 50;
+  const advanceDue = Math.round(Number(service.price) * (advancePct / 100) * 100) / 100;
+  const balanceDue = Math.round((Number(service.price) - advanceDue) * 100) / 100;
   const payNow = req.body?.payNow !== false;
-  const paymentStatus = payNow ? 'Paid' : 'Pending';
-  const amountPaid = payNow ? service.price : 0;
+  const amountPaid = payNow ? advanceDue : 0;
+  const paymentStatus = payNow ? 'AdvancePaid' : 'AdvanceDue';
   const result = await db
     .prepare(
       `INSERT INTO orders (
          code, customer_user_id, client_id, site_id, service_id, service_name,
-         amount, status, payment_status, address, slot, amount_paid
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?, ?, ?)`
+         amount, status, payment_status, address, slot, amount_paid,
+         advance_pct, advance_due, balance_due, advance_paid_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED', ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       code,
@@ -168,29 +173,34 @@ router.post('/orders', requireAuth, async (req, res) => {
       paymentStatus,
       address || null,
       slot || null,
-      amountPaid
+      amountPaid,
+      advancePct,
+      advanceDue,
+      balanceDue,
+      payNow ? new Date().toISOString() : null
     );
   if (payNow) {
     await db.prepare(
-      `INSERT INTO payments (entity_type, entity_id, amount, method, status, reference, created_by)
-       VALUES ('order', ?, ?, 'UPI', 'Paid', ?, ?)`
-    ).run(result.lastInsertRowid, service.price, `BOOK-${code}`, user.id);
+      `INSERT INTO payments (entity_type, entity_id, amount, method, status, reference, notes, created_by)
+       VALUES ('order', ?, ?, 'UPI', 'Paid', ?, '50% advance', ?)`
+    ).run(result.lastInsertRowid, advanceDue, `ADV-${code}`, user.id);
   }
 
-  await db.prepare(
-    `INSERT INTO tickets (code, title, description, client_id, site_id, priority, status, created_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'Normal', 'Unassigned', ?, datetime('now'))`
+  const ticketIns = await db.prepare(
+    `INSERT INTO tickets (code, title, description, client_id, site_id, priority, status, created_by, updated_at, order_id, crew_required, work_type)
+     VALUES (?, ?, ?, ?, ?, 'Normal', 'Unassigned', ?, datetime('now'), ?, 1, 'daily_wage')`
   ).run(
     `${code}-T`,
     service.name,
-    `Customer order ${code}${address ? ' · ' + address : ''}${slot ? ' · ' + slot : ''}`,
+    `Customer order ${code}${address ? ' · ' + address : ''}${slot ? ' · ' + slot : ''} · 50% advance ${payNow ? 'paid' : 'due'}`,
     clientId,
     resolvedSiteId,
-    user.id
+    user.id,
+    result.lastInsertRowid
   );
 
   await db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'order', ?)`)
-    .run(user.id, `${user.name} booked ${service.name} (${code})`, result.lastInsertRowid);
+    .run(user.id, `${user.name} booked ${service.name} (${code}) · advance ₹${advanceDue}`, result.lastInsertRowid);
 
   const order = await db.prepare('SELECT * FROM orders WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json({
@@ -199,13 +209,43 @@ router.post('/orders', requireAuth, async (req, res) => {
       code: order.code,
       service: order.service_name,
       amount: order.amount,
+      advanceDue: order.advance_due,
+      balanceDue: order.balance_due,
+      amountPaid: order.amount_paid,
       status: order.status,
       paymentStatus: order.payment_status,
       address: order.address,
       slot: order.slot,
-      bookedAt: formatDate(order.booked_at)
+      bookedAt: formatDate(order.booked_at),
+      ticketId: ticketIns.lastInsertRowid
     }
   });
+});
+
+/** Pay remaining 50% on completion */
+router.post('/orders/:id/pay-balance', requireAuth, async (req, res) => {
+  const order = await db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  if (req.user.role === 'customer' && order.customer_user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Not your order' });
+  }
+  const due = Math.max(0, Number(order.amount) - Number(order.amount_paid || 0));
+  if (!(due > 0)) return res.json({ ok: true, paymentStatus: 'Paid', amountPaid: order.amount_paid });
+
+  const paid = Number(order.amount_paid || 0) + due;
+  await db
+    .prepare(
+      `UPDATE orders SET amount_paid = ?, payment_status = 'Paid', balance_due = 0, completion_paid_at = datetime('now'), status = 'COMPLETED' WHERE id = ?`
+    )
+    .run(paid, order.id);
+  await db
+    .prepare(
+      `INSERT INTO payments (entity_type, entity_id, amount, method, status, reference, notes, created_by)
+       VALUES ('order', ?, ?, 'UPI', 'Paid', ?, '50% on completion', ?)`
+    )
+    .run(order.id, due, `BAL-${order.code}`, req.user.id);
+
+  res.json({ ok: true, amountPaid: paid, paidNow: due, paymentStatus: 'Paid' });
 });
 
 function formatDate(iso) {

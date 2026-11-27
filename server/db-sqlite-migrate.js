@@ -467,6 +467,58 @@ module.exports = function migrateSqlite(db) {
   addCol('sites', 'longitude', 'REAL');
   addCol('users', 'home_lat', 'REAL');
   addCol('users', 'home_lng', 'REAL');
+  addCol('users', 'engagement_type', "TEXT DEFAULT 'daily_wage'");
+  addCol('users', 'payment_locked', 'INTEGER DEFAULT 0');
+  addCol('users', 'retained_balance', 'REAL DEFAULT 0');
+  addCol('attendance', 'work_type', "TEXT DEFAULT 'daily_wage'");
+  addCol('tickets', 'crew_required', 'INTEGER DEFAULT 1');
+  addCol('tickets', 'work_type', "TEXT DEFAULT 'daily_wage'");
+  addCol('tickets', 'order_id', 'INTEGER');
+  addCol('tickets', 'sale_value', 'REAL DEFAULT 0');
+  addCol('tickets', 'purchase_value', 'REAL DEFAULT 0');
+  addCol('tickets', 'labour_cost', 'REAL DEFAULT 0');
+  addCol('tickets', 'material_cost', 'REAL DEFAULT 0');
+  addCol('tickets', 'cost_mode', "TEXT DEFAULT 'with_labour'");
+  addCol('tickets', 'start_otp_hash', 'TEXT');
+  addCol('tickets', 'complete_otp_hash', 'TEXT');
+  addCol('tickets', 'start_verified_at', 'TEXT');
+  addCol('tickets', 'complete_verified_at', 'TEXT');
+  addCol('salary_claims', 'gross_amount', 'REAL');
+  addCol('salary_claims', 'retained_amount', 'REAL DEFAULT 0');
+  addCol('salary_claims', 'net_amount', 'REAL');
+  addCol('salary_claims', 'week_key', 'TEXT');
+  addCol('orders', 'advance_pct', 'REAL DEFAULT 50');
+  addCol('orders', 'advance_due', 'REAL DEFAULT 0');
+  addCol('orders', 'balance_due', 'REAL DEFAULT 0');
+  addCol('orders', 'advance_paid_at', 'TEXT');
+  addCol('orders', 'completion_paid_at', 'TEXT');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ticket_crew (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      role_on_job TEXT DEFAULT 'helper',
+      day_wage REAL DEFAULT 0,
+      work_type TEXT DEFAULT 'daily_wage',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(ticket_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS otp_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      purpose TEXT NOT NULL,
+      target TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id INTEGER,
+      user_id INTEGER,
+      payload TEXT,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      attempts INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
 
   const assetsMissingQr = db.prepare(`SELECT id FROM site_assets WHERE qr_token IS NULL OR qr_token = ''`).all();
   const setQr = db.prepare(`UPDATE site_assets SET qr_token = ? WHERE id = ?`);

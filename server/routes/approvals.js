@@ -96,12 +96,15 @@ router.post('/claims/:id/decide', requireAuth, requireRole('admin', 'manager'), 
   await db.prepare('UPDATE salary_claims SET status = ? WHERE id = ?').run(decision, claim.id);
 
   if (decision === 'Rejected') {
+    const refund = Number(claim.net_amount != null ? claim.net_amount : claim.amount) || 0;
+    const retained = Number(claim.retained_amount) || 0;
     await db.prepare(`
       UPDATE users SET
         wage_balance = wage_balance + ?,
+        retained_balance = CASE WHEN COALESCE(retained_balance,0) >= ? THEN retained_balance - ? ELSE 0 END,
         claims_this_month = CASE WHEN claims_this_month > 0 THEN claims_this_month - 1 ELSE 0 END
       WHERE id = ?
-    `).run(claim.amount, claim.user_id);
+    `).run(refund, retained, retained, claim.user_id);
   }
 
   await db.prepare(`INSERT INTO activity_log (user_id, message, entity_type, entity_id) VALUES (?, ?, 'claim', ?)`)

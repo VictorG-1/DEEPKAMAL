@@ -97,6 +97,7 @@ const NAV = {
     ['notifications', 'Alerts'],
     ['banks', 'Banks'],
     ['feedback', 'Feedback'],
+    ['charts', 'Charts'],
     ['database', 'Database'],
     ['account', 'Account']
   ],
@@ -119,6 +120,7 @@ const NAV = {
     ['approvals', 'Approvals'],
     ['notifications', 'Alerts'],
     ['feedback', 'Feedback'],
+    ['charts', 'Charts'],
     ['account', 'Account']
   ],
   resource: [
@@ -181,6 +183,12 @@ async function ensureViewData(view) {
       if (role === 'admin' || role === 'manager') {
         tasks.push(API.get('/people').then((d) => (state.people = d.people)).catch(() => {}));
       }
+    }
+    if (view === 'charts' && (role === 'admin' || role === 'manager')) {
+      tasks.push(API.get('/analytics/charts').then((d) => (state.charts = d)).catch(() => (state.charts = null)));
+    }
+    if (view === 'people' && (role === 'admin' || role === 'manager')) {
+      tasks.push(API.get('/people').then((d) => (state.people = d.people)).catch(() => {}));
     }
     if (view === 'quotations' || String(view).startsWith('quote')) {
       tasks.push(API.get('/quotations').then((d) => (state.quotations = d.quotations || [])).catch(() => {}));
@@ -419,18 +427,59 @@ async function checkDb(full = false) {
   }
 }
 
-async function doLogin(email, password, errorEl) {
+async function doLogin(email, password) {
   setBusy(true, 'Signing in…');
   try {
     const data = await API.post('/auth/login', {
       email: String(email || '').trim(),
       password: String(password || '')
     });
-    API.setSession(data.token, data.user);
-    await enterApp();
+    if (data.token && data.user) {
+      API.setSession(data.token, data.user);
+      await enterApp();
+      return;
+    }
+    if (data.requiresOtp) {
+      setBusy(false);
+      await promptLoginOtp(email, password, data);
+      return;
+    }
+    throw new Error('Login failed');
   } finally {
     setBusy(false);
   }
+}
+
+function promptLoginOtp(email, password, challenge) {
+  return new Promise((resolve, reject) => {
+    openSheet(`
+      <h2>Enter login OTP</h2>
+      <p class="meta">Code sent to ${esc(challenge.targetMasked || 'your phone/email')}${
+        challenge.devCode ? ` · demo code <strong>${esc(challenge.devCode)}</strong>` : ''
+      }</p>
+      <form id="loginOtpForm">
+        <label>6-digit OTP<input name="code" inputmode="numeric" pattern="\\d{6}" maxlength="6" required autofocus /></label>
+        <button class="btn-primary" type="submit" style="width:100%">Verify & continue</button>
+      </form>`);
+    if (challenge.devCode) toast(`OTP ${challenge.devCode}`);
+    document.getElementById('loginOtpForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const code = new FormData(e.target).get('code');
+      try {
+        setBusy(true, 'Verifying OTP…');
+        const data = await API.post('/auth/verify-login-otp', { email, code });
+        API.setSession(data.token, data.user);
+        closeSheet();
+        await enterApp();
+        resolve();
+      } catch (err) {
+        toast(err.message);
+        reject(err);
+      } finally {
+        setBusy(false);
+      }
+    };
+  });
 }
 
 document.querySelectorAll('.quick-login').forEach((btn) => {
@@ -703,7 +752,8 @@ function bookService(service) {
           <option>Tomorrow · Afternoon</option>
         </select>
       </label>
-      <button class="btn-primary" type="submit" style="width:100%">Confirm booking · ${money(service.price)}</button>
+      <p class="meta">Payment plan: <strong>50% advance now</strong> (${money(Math.round(service.price * 0.5))}) · 50% on work completion.</p>
+      <button class="btn-primary" type="submit" style="width:100%">Pay 50% advance · ${money(Math.round(service.price * 0.5))}</button>
     </form>
   `);
   document.getElementById('bookForm').onsubmit = async (e) => {
@@ -713,10 +763,11 @@ function bookService(service) {
       const data = await API.post('/services/orders', {
         serviceId: service.id,
         address: fd.get('address'),
-        slot: fd.get('slot')
+        slot: fd.get('slot'),
+        payNow: true
       });
       closeSheet();
-      toast(`Booked ${data.order.code}`);
+      toast(`Booked ${data.order.code} · advance ${money(data.order.advanceDue || data.order.amountPaid)}`);
       await loadAll();
       goView('orders');
     } catch (err) {
@@ -879,14 +930,29 @@ function renderDispatch() {
   const partners = board.partners || state.people.filter((p) => p.role === 'resource');
 
   const assignControls = (ticketId) => `
-    <div class="assign-row">
-      <select data-partner-for="${ticketId}">
-        <option value="">Select partner</option>
-        ${partners
-          .map((p) => `<option value="${p.id}">${esc(p.name)}${p.activeJobs != null ? ` (${p.activeJobs} jobs)` : ''}</option>`)
-          .join('')}
-      </select>
-      <button class="btn-primary" type="button" data-assign="${ticketId}">Assign</button>
+    <div class="assign-stack" data-assign-box="${ticketId}">
+      <div class="assign-row">
+        <select data-partner-for="${ticketId}">
+          <option value="">Lead partner</option>
+          ${partners
+            .map((p) => `<option value="${p.id}">${esc(p.name)}${p.activeJobs != null ? ` (${p.activeJobs} jobs)` : ''}</option>`)
+            .join('')}
+        </select>
+      </div>
+      <div class="assign-row">
+        <label class="muted">People needed
+          <select data-crew-for="${ticketId}">
+            ${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('')}
+          </select>
+        </label>
+        <label class="muted">Work type
+          <select data-worktype-for="${ticketId}">
+            <option value="daily_wage">Daily wage</option>
+            <option value="contract">Contract</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn-primary" type="button" data-assign="${ticketId}">Assign crew</button>
     </div>`;
 
   const mapJobs = board.mapJobs || [...(board.unassigned || []), ...(board.active || [])];
@@ -966,11 +1032,11 @@ function renderPartnerHome() {
                 const status = j.status;
                 let actions = '';
                 if (status === 'Assigned') {
-                  actions = `<button class="btn-primary" type="button" data-job-status="${j.id}" data-next="On the way">Start / On the way</button>`;
+                  actions = `<button class="btn-primary" type="button" data-job-start-otp="${j.id}">Start with OTP</button>`;
                 } else if (status === 'On the way') {
                   actions = `<button class="btn-primary" type="button" data-job-status="${j.id}" data-next="In progress">Arrived / Start work</button>`;
                 } else if (status === 'In progress') {
-                  actions = `<button class="btn-primary" type="button" data-job-complete="${j.id}">Complete job</button>`;
+                  actions = `<button class="btn-primary" type="button" data-job-complete="${j.id}">Complete (customer OTP)</button>`;
                 }
                 return `<article class="job-card">
                   <div class="row" style="border:0;padding:0 0 8px">
@@ -1021,14 +1087,75 @@ function renderPeople() {
   document.getElementById('title').textContent = 'Team';
   document.getElementById('topCta').innerHTML = '';
   const rows = state.people.filter((p) => p.role !== 'customer');
-  return `<div class="panel table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Team</th><th>Availability</th><th>KYC</th><th>Access</th></tr></thead><tbody>${rows
-    .map(
-      (p) =>
-        `<tr><td><strong>${esc(p.name)}</strong><div style="color:var(--muted);font-size:.8rem">${esc(p.email || '')}</div></td><td>${esc(p.jobTitle || p.role)}</td><td>${esc(p.team || '—')}</td><td>${badge(p.availability)}</td><td>${badge(p.kyc?.status || '—')}</td>
-        <td>${p.role === 'resource' ? `<button class="btn-secondary" type="button" data-reset-pin="${p.id}">Reset PIN</button>` : '—'}</td></tr>`
-    )
+  const isOwner = API.user.role === 'admin';
+  return `<div class="panel table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Engagement</th><th>Pay lock</th><th>KYC</th><th>Actions</th></tr></thead><tbody>${rows
+    .map((p) => {
+      const eng = p.engagementType === 'contract' ? 'Contract' : 'Daily wage';
+      return `<tr>
+        <td><strong>${esc(p.name)}</strong><div class="muted">${esc(p.email || '')}</div></td>
+        <td>${esc(p.jobTitle || p.role)}</td>
+        <td>${p.role === 'resource' ? badge(eng) : '—'}</td>
+        <td>${p.role === 'resource' ? badge(p.paymentLocked ? 'Locked' : 'Open') : '—'}</td>
+        <td>${badge(p.kyc?.status || '—')}</td>
+        <td class="job-actions">
+          ${p.role === 'resource' ? `<button class="btn-secondary" type="button" data-reset-pin="${p.id}">Reset PIN</button>` : ''}
+          ${
+            isOwner && p.role === 'resource'
+              ? `<button class="btn-secondary" type="button" data-partner-ops="${p.id}">Ops</button>`
+              : ''
+          }
+        </td>
+      </tr>`;
+    })
     .join('')}</tbody></table></div>
-    <div class="panel"><p class="muted" style="margin:0">Partners sign in with email + personal PIN (not the shared owner password). Reset PIN shows a one-time PIN and temporary password to share privately.</p></div>`;
+    <div class="panel"><p class="muted" style="margin:0">Owner can set contract vs daily wage and lock partner payouts. Claims are once/week with 20% retain.</p></div>`;
+}
+
+function renderCharts() {
+  document.getElementById('eyebrow').textContent = 'Internal';
+  document.getElementById('title').textContent = 'Charts';
+  document.getElementById('topCta').innerHTML = '';
+  const c = state.charts;
+  if (!c) return `<div class="panel empty"><h3>Loading charts…</h3></div>`;
+  const bar = (items, color = 'var(--accent)') => {
+    const max = Math.max(1, ...items.map((i) => Number(i.value) || 0));
+    return `<div class="chart-bars">${items
+      .map(
+        (i) => `<div class="chart-bar-row"><span>${esc(i.label)}</span>
+        <div class="chart-bar-track"><i style="width:${Math.round((Number(i.value) / max) * 100)}%;background:${color}"></i></div>
+        <strong>${esc(String(i.value))}</strong></div>`
+      )
+      .join('')}</div>`;
+  };
+  return `
+    <div class="metrics">
+      <article class="metric"><span>Revenue this month</span><strong>${money(c.revenueThisMonth || 0)}</strong></article>
+      <article class="metric"><span>Job margin</span><strong>${money(c.jobEconomics?.margin || 0)}</strong></article>
+      <article class="metric"><span>Sale value</span><strong>${money(c.jobEconomics?.sale || 0)}</strong></article>
+      <article class="metric"><span>Purchase</span><strong>${money(c.jobEconomics?.purchase || 0)}</strong></article>
+    </div>
+    <div class="panel"><div class="panel-h"><div><h2>Ticket status</h2><p>Open pipeline</p></div></div>${bar(c.ticketStatus || [])}</div>
+    <div class="panel"><div class="panel-h"><div><h2>Orders · payment</h2><p>50% advance / balance</p></div></div>${bar(c.orderPayments || [], '#0b1f33')}</div>
+    <div class="panel"><div class="panel-h"><div><h2>Tickets · last 14 days</h2></div></div>${bar(c.ticketsLast14Days || [], '#c2410c')}</div>
+    <div class="panel"><div class="panel-h"><div><h2>Partner wage balances</h2><p>Retained shown in muted</p></div></div>
+      <div class="list">${(c.partnerWages || [])
+        .map(
+          (p) =>
+            `<div class="row"><div><strong>${esc(p.name)}</strong><small>${esc(p.engagement)}${p.locked ? ' · locked' : ''}</small></div>
+            <div><strong>${money(p.balance)}</strong> <span class="muted">ret ${money(p.retained)}</span></div></div>`
+        )
+        .join('') || '<div class="empty"><h3>No partners</h3></div>'}</div>
+    </div>
+    ${
+      API.user.role === 'admin'
+        ? `<div class="panel"><div class="panel-h"><div><h2>Economics (superadmin)</h2><p>Labour / material on closed jobs</p></div></div>
+        <div class="metrics">
+          <article class="metric"><span>Labour</span><strong>${money(c.jobEconomics?.labour || 0)}</strong></article>
+          <article class="metric"><span>Material</span><strong>${money(c.jobEconomics?.material || 0)}</strong></article>
+          <article class="metric"><span>With labour sale</span><strong>${money(c.jobEconomics?.sale || 0)}</strong></article>
+        </div></div>`
+        : ''
+    }`;
 }
 
 function renderClients() {
@@ -1447,7 +1574,9 @@ function renderAttendance() {
       <article class="metric"><span>Payroll total</span><strong>${money(state.payrollTotal || 0)}</strong></article>
     </div>
     <div class="panel table-wrap">
-      <div class="panel-h"><div><h2>Field team — today</h2><p>Mark each person, or use Mark all present</p></div></div>
+      <div class="panel-h"><div><h2>Field team — today</h2><p>Mark attendance · set contract or daily wage for the day</p></div>
+        <select id="dayWorkType"><option value="daily_wage">Day type: Daily wage</option><option value="contract">Day type: Contract</option></select>
+      </div>
       <table>
         <thead><tr><th>Name</th><th>Rate</th><th>Days</th><th>Payable</th><th>Today</th><th>Mark</th></tr></thead>
         <tbody>${state.attendance
@@ -1745,12 +1874,18 @@ function bindScreen() {
   document.querySelectorAll('[data-assign]').forEach((btn) => {
     btn.onclick = async () => {
       const id = btn.dataset.assign;
-      const select = document.querySelector(`[data-partner-for="${id}"]`);
-      const partnerId = Number(select?.value);
-      if (!partnerId) return toast('Select a partner first');
+      const partnerId = Number(document.querySelector(`[data-partner-for="${id}"]`)?.value);
+      const crewRequired = Number(document.querySelector(`[data-crew-for="${id}"]`)?.value) || 1;
+      const workType = document.querySelector(`[data-worktype-for="${id}"]`)?.value || 'daily_wage';
+      if (!partnerId) return toast('Select a lead partner');
       try {
-        await API.post(`/tickets/${id}/assign`, { assignedUserId: partnerId });
-        toast('Partner assigned');
+        await API.post(`/tickets/${id}/assign`, {
+          assignedUserId: partnerId,
+          crewRequired,
+          workType,
+          crewUserIds: [partnerId]
+        });
+        toast(`Assigned · ${crewRequired} people · ${workType === 'contract' ? 'contract' : 'daily wage'}`);
         await loadAll();
         render();
       } catch (err) {
@@ -1762,6 +1897,12 @@ function bindScreen() {
   document.querySelectorAll('[data-open-assign]').forEach((btn) => {
     btn.onclick = () => openAssignSheet(Number(btn.dataset.openAssign));
   });
+  document.querySelectorAll('[data-job-start-otp]').forEach((btn) => {
+    btn.onclick = () => startJobWithOtp(Number(btn.dataset.jobStartOtp));
+  });
+  document.querySelectorAll('[data-partner-ops]').forEach((btn) => {
+    btn.onclick = () => openPartnerOps(Number(btn.dataset.partnerOps));
+  });
 
   document.querySelectorAll('[data-job-status]').forEach((btn) => {
     btn.onclick = async () => {
@@ -1771,7 +1912,8 @@ function bindScreen() {
         await loadAll();
         render();
       } catch (err) {
-        toast(err.message);
+        if (err.data?.needsStartOtp) startJobWithOtp(Number(btn.dataset.jobStatus));
+        else toast(err.message);
       }
     };
   });
@@ -1782,7 +1924,7 @@ function bindScreen() {
   document.getElementById('claimBtn')?.addEventListener('click', async () => {
     try {
       const data = await API.post('/attendance/claim');
-      toast(`Claimed ${money(data.amount)}`);
+      toast(`Claim ${money(data.amount)} · retained ${money(data.retained)} (20%) · once/week`);
       await loadAll();
       render();
     } catch (err) {
@@ -1977,6 +2119,15 @@ function createTicket() {
           ${state.clients.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
         </select>
       </label>
+      <label>People required on work
+        <select name="crewRequired">${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('')}</select>
+      </label>
+      <label>Work type
+        <select name="workType">
+          <option value="daily_wage">Daily wage</option>
+          <option value="contract">Contract</option>
+        </select>
+      </label>
       <label>Priority
         <select name="priority"><option>Normal</option><option>High</option><option>Critical</option></select>
       </label>
@@ -1990,7 +2141,9 @@ function createTicket() {
       title: fd.get('title'),
       description: fd.get('description'),
       priority: fd.get('priority'),
-      clientId: fd.get('clientId') ? Number(fd.get('clientId')) : null
+      clientId: fd.get('clientId') ? Number(fd.get('clientId')) : null,
+      crewRequired: Number(fd.get('crewRequired')) || 1,
+      workType: fd.get('workType')
     });
     closeSheet();
     toast('Ticket saved — assign from Dispatch');
@@ -2001,41 +2154,168 @@ function createTicket() {
 
 function openAssignSheet(ticketId) {
   const ticket = state.tickets.find((t) => t.id === ticketId);
-  const partners = (state.dispatch?.partners || state.people.filter((p) => p.role === 'resource'));
+  const partners = state.dispatch?.partners || state.people.filter((p) => p.role === 'resource');
   openSheet(`
-    <h2>Assign partner</h2>
-    <p class="meta">${esc(ticket?.code || '')} · ${esc(ticket?.title || '')}</p>
+    <h2>Assign crew</h2>
+    <p class="meta">${esc(ticket?.code || '')} · people needed + daily wage / contract</p>
     <form id="assignForm">
-      <label>Partner
+      <label>Lead partner
         <select name="assignedUserId" required>
           <option value="">Select</option>
           ${partners.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
         </select>
       </label>
-      <button class="btn-primary" type="submit" style="width:100%">Assign job</button>
+      <label>People required
+        <select name="crewRequired">${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('')}</select>
+      </label>
+      <label>Work type that day
+        <select name="workType">
+          <option value="daily_wage">Daily wage</option>
+          <option value="contract">Contract</option>
+        </select>
+      </label>
+      <label>Helpers (optional, multi-select)
+        <select name="helpers" multiple size="4">
+          ${partners.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+        </select>
+      </label>
+      <button class="btn-primary" type="submit" style="width:100%">Assign crew</button>
     </form>
   `);
   document.getElementById('assignForm').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    await API.post(`/tickets/${ticketId}/assign`, { assignedUserId: Number(fd.get('assignedUserId')) });
+    const lead = Number(fd.get('assignedUserId'));
+    const helpers = [...e.target.helpers.selectedOptions].map((o) => Number(o.value));
+    await API.post(`/tickets/${ticketId}/assign`, {
+      assignedUserId: lead,
+      crewRequired: Number(fd.get('crewRequired')) || 1,
+      workType: fd.get('workType'),
+      crewUserIds: [...new Set([lead, ...helpers])]
+    });
     closeSheet();
-    toast('Assigned');
+    toast('Crew assigned');
     await loadAll();
     render();
   };
 }
 
-function completeJob(ticketId) {
+function openPartnerOps(partnerId) {
+  const p = state.people.find((x) => x.id === partnerId);
+  if (!p) return;
+  openSheet(`
+    <h2>${esc(p.name)}</h2>
+    <p class="meta">Superadmin · engagement & payment lock</p>
+    <form id="opsForm">
+      <label>Engagement
+        <select name="engagementType">
+          <option value="daily_wage" ${p.engagementType !== 'contract' ? 'selected' : ''}>Daily wage</option>
+          <option value="contract" ${p.engagementType === 'contract' ? 'selected' : ''}>Contract</option>
+        </select>
+      </label>
+      <label>Daily wage ₹<input name="dailyWage" type="number" value="${Number(p.dailyWage) || 0}" /></label>
+      <label>Phone<input name="phone" value="${esc(p.phone || '')}" placeholder="91xxxxxxxxxx" /></label>
+      <label class="row" style="border:0"><span><input type="checkbox" name="paymentLocked" ${p.paymentLocked ? 'checked' : ''} /> Lock partner payments</span></label>
+      <button class="btn-primary" type="submit" style="width:100%">Save</button>
+    </form>
+    ${
+      API.user.role === 'admin'
+        ? `<hr style="margin:18px 0;border:none;border-top:1px solid var(--line)" />
+    <h3 style="margin:0 0 8px;font-size:1rem">Ticket sale / purchase costing</h3>
+    <form id="costForm">
+      <label>Ticket<select name="ticketId" required>${state.tickets
+        .slice(0, 40)
+        .map((t) => `<option value="${t.id}">${esc(t.code)} · ${esc(t.title)}</option>`)
+        .join('')}</select></label>
+      <label>Sale value<input name="saleValue" type="number" step="0.01" /></label>
+      <label>Purchase value<input name="purchaseValue" type="number" step="0.01" /></label>
+      <label>Labour cost<input name="labourCost" type="number" step="0.01" /></label>
+      <label>Material cost<input name="materialCost" type="number" step="0.01" /></label>
+      <label>Mode<select name="costMode">
+        <option value="with_labour">With labour</option>
+        <option value="with_material">With material</option>
+        <option value="without_material">Without material</option>
+      </select></label>
+      <button class="btn-secondary" type="submit" style="width:100%">Save costing</button>
+    </form>`
+        : ''
+    }
+  `);
+  document.getElementById('opsForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    await API.patch(`/people/${partnerId}/ops`, {
+      engagementType: fd.get('engagementType'),
+      dailyWage: Number(fd.get('dailyWage')),
+      phone: fd.get('phone'),
+      paymentLocked: Boolean(fd.get('paymentLocked'))
+    });
+    toast('Partner ops saved');
+    await loadAll();
+    closeSheet();
+    render();
+  };
+  document.getElementById('costForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    await API.post(`/tickets/${fd.get('ticketId')}/costing`, {
+      saleValue: Number(fd.get('saleValue')) || 0,
+      purchaseValue: Number(fd.get('purchaseValue')) || 0,
+      labourCost: Number(fd.get('labourCost')) || 0,
+      materialCost: Number(fd.get('materialCost')) || 0,
+      costMode: fd.get('costMode')
+    });
+    toast('Costing saved');
+  });
+}
+
+async function startJobWithOtp(ticketId) {
+  try {
+    const issued = await API.post(`/tickets/${ticketId}/otp/start`);
+    openSheet(`
+      <h2>Work start OTP</h2>
+      <p class="meta">Sent to partner ${esc(issued.targetMasked || '')}${
+        issued.devCode ? ` · demo <strong>${esc(issued.devCode)}</strong>` : ''
+      }</p>
+      <form id="startOtpForm">
+        <label>OTP<input name="code" inputmode="numeric" pattern="\\d{6}" maxlength="6" required /></label>
+        <button class="btn-primary" type="submit" style="width:100%">Verify & start</button>
+      </form>`);
+    if (issued.devCode) toast(`Start OTP ${issued.devCode}`);
+    document.getElementById('startOtpForm').onsubmit = async (e) => {
+      e.preventDefault();
+      await API.post(`/tickets/${ticketId}/otp/start/verify`, { code: new FormData(e.target).get('code') });
+      closeSheet();
+      toast('Work started');
+      await loadAll();
+      render();
+    };
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function completeJob(ticketId) {
   const ticket = state.tickets.find((t) => t.id === ticketId) || state.dashboard?.resource?.activeJobs?.find((j) => j.id === ticketId);
+  let otpHint = '';
+  try {
+    const issued = await API.post(`/tickets/${ticketId}/otp/complete`);
+    otpHint = `Customer OTP → ${esc(issued.targetMasked || '')}${issued.devCode ? ` · demo <strong>${esc(issued.devCode)}</strong>` : ''}`;
+    if (issued.devCode) toast(`Customer OTP ${issued.devCode}`);
+  } catch (err) {
+    toast(err.message || 'Could not send customer OTP');
+    return;
+  }
   openSheet(`
     <h2>Complete job</h2>
     <p class="meta">${esc(ticket?.code || '')} · ${esc(ticket?.title || '')}</p>
+    <p class="meta">${otpHint}</p>
     <form id="completeForm">
+      <label>Customer completion OTP<input name="otp" inputmode="numeric" pattern="\\d{6}" maxlength="6" required /></label>
       <label>Notes<textarea name="notes" placeholder="What was done on site"></textarea></label>
-      <label>Site photo<input name="photo" type="file" accept="image/*" capture="environment" /></label>
+      <label>Work-done photo ${API.user.role === 'manager' || API.user.role === 'admin' ? '(required for sub-admin)' : ''}<input name="photo" type="file" accept="image/*" capture="environment" ${API.user.role === 'manager' ? 'required' : ''} /></label>
       <p class="meta" id="geoStatus">Capturing GPS…</p>
-      <button class="btn-primary" type="submit" style="width:100%">Submit completion</button>
+      <button class="btn-primary" type="submit" style="width:100%">Verify OTP & complete</button>
     </form>
   `);
   const geo = { latitude: null, longitude: null };
@@ -2069,21 +2349,7 @@ function completeJob(ticketId) {
       longitude: geo.longitude
     };
     try {
-      if (!navigator.onLine && window.DKOffline) {
-        let photoData = null;
-        if (photo && photo.size) {
-          photoData = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(photo);
-          });
-        }
-        DKOffline.enqueue('evidence', { ...payload, photoData });
-        closeSheet();
-        toast('Saved offline — will sync when online');
-        return;
-      }
+      await API.post(`/tickets/${ticketId}/otp/complete/verify`, { code: fd.get('otp') });
       if (photo && photo.size) {
         const form = new FormData();
         form.append('photo', photo);
@@ -2094,11 +2360,13 @@ function completeJob(ticketId) {
         if (geo.latitude != null) form.append('latitude', String(geo.latitude));
         if (geo.longitude != null) form.append('longitude', String(geo.longitude));
         await API.postForm('/uploads/evidence', form);
+      } else if (API.user.role === 'manager') {
+        return toast('Sub-admin must upload work-done photo');
       } else {
         await API.post(`/tickets/${ticketId}/complete`, payload);
       }
       closeSheet();
-      toast('Job completed and saved');
+      toast('Job completed · balance 50% due on order if linked');
       await loadAll();
       render();
     } catch (err) {
@@ -2176,14 +2444,13 @@ function addService() {
 
 async function markOneAttendance(userId, status) {
   try {
-    const data = window.DKField
-      ? await DKField.markAttendance(userId, status)
-      : await API.post('/attendance', { userId: Number(userId) || API.user.id, status });
-    if (API.user.role === 'resource' && data.wageBalance != null) {
-      API.user.wageBalance = data.wageBalance;
-    }
-    const geoNote = data.geo ? ` · GPS ${Number(data.geo.latitude).toFixed(4)}, ${Number(data.geo.longitude).toFixed(4)}` : '';
-    toast(`Attendance: ${status}${geoNote}`);
+    const workType = document.getElementById('dayWorkType')?.value || 'daily_wage';
+    const data = await API.post('/attendance', {
+      userId: Number(userId) || API.user.id,
+      status,
+      workType
+    });
+    toast(`Attendance: ${status} · ${workType === 'contract' ? 'contract' : 'daily wage'}`);
     await loadAll();
     render();
   } catch (err) {
@@ -2193,7 +2460,8 @@ async function markOneAttendance(userId, status) {
 
 async function markAttendanceAll(status = 'Present') {
   try {
-    const data = await API.post('/attendance', { markAll: true, status });
+    const workType = document.getElementById('dayWorkType')?.value || 'daily_wage';
+    const data = await API.post('/attendance', { markAll: true, status, workType });
     toast(`Marked ${data.marked} partners · ${status}`);
     await loadAll();
     render();
@@ -2281,6 +2549,7 @@ function render() {
   else if (state.view === 'banks') root.innerHTML = DKExtras.renderBanks();
   else if (state.view === 'feedback') root.innerHTML = DKExtras.renderFeedback();
   else if (state.view === 'attendance') root.innerHTML = renderAttendance();
+  else if (state.view === 'charts') root.innerHTML = renderCharts();
   else if (state.view === 'approvals') root.innerHTML = renderApprovals();
   else if (role === 'customer') root.innerHTML = renderCustomerHome();
   else if (role === 'resource') root.innerHTML = renderPartnerHome();

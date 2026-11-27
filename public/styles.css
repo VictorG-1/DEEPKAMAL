@@ -667,13 +667,34 @@ tbody tr:hover { background: #f8fafc; }
 .job-card:hover { border-color: #fdba74; box-shadow: var(--shadow); }
 .job-desc { margin: 0 0 12px; color: var(--muted); font-size: .9rem; line-height: 1.4; }
 .job-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.assign-row { display: flex; gap: 8px; align-items: center; }
+.assign-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .assign-row select {
   flex: 1;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   background: #f8fafc;
+}
+.assign-stack { display: grid; gap: 8px; margin-top: 8px; }
+.assign-stack label.muted { display: grid; gap: 4px; font-size: .78rem; flex: 1; min-width: 120px; }
+.chart-bars { display: grid; gap: 10px; }
+.chart-bar-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 140px) 1fr auto;
+  gap: 10px;
+  align-items: center;
+  font-size: .86rem;
+}
+.chart-bar-track {
+  height: 10px;
+  border-radius: 8px;
+  background: #e8eef5;
+  overflow: hidden;
+}
+.chart-bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: 8px;
 }
 
 /* QUOTATIONS */

@@ -142,6 +142,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/works', workRoutes);
 app.use('/api/approvals', approvalRoutes);
+app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/db', dbStatusRoutes);
 
 app.get('/a/:token', (_req, res) => {

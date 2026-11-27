@@ -50,10 +50,29 @@ router.post(
         );
 
       if (ticketId && String(req.body.complete) === 'true') {
+        const t = await db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
+        if (!t?.complete_verified_at) {
+          return res.status(400).json({
+            error: 'Customer completion OTP required before closing the job',
+            needsCompleteOtp: true,
+            evidenceId: result.lastInsertRowid,
+            photoPath
+          });
+        }
         await db.prepare(`UPDATE tickets SET status = 'Resolved', updated_at = datetime('now') WHERE id = ?`).run(ticketId);
-        const t = await db.prepare('SELECT assigned_user_id FROM tickets WHERE id = ?').get(ticketId);
         if (t?.assigned_user_id) {
           await db.prepare(`UPDATE users SET availability = 'Available' WHERE id = ?`).run(t.assigned_user_id);
+        }
+        if (t?.order_id) {
+          const order = await db.prepare('SELECT * FROM orders WHERE id = ?').get(t.order_id);
+          if (order) {
+            const balance = Math.max(0, Number(order.amount) - Number(order.amount_paid || 0));
+            await db
+              .prepare(
+                `UPDATE orders SET balance_due = ?, payment_status = ?, status = 'COMPLETED' WHERE id = ?`
+              )
+              .run(balance, balance > 0 ? 'BalanceDue' : 'Paid', order.id);
+          }
         }
       }
 

@@ -35,24 +35,31 @@ async function recalcWageBalance(userId, month = monthKey(new Date().toISOString
   return balance;
 }
 
-async function upsertAttendance(userId, status, day, { siteId = null, latitude = null, longitude = null, accuracy = null } = {}) {
-  const user = await db.prepare('SELECT id, daily_wage FROM users WHERE id = ?').get(userId);
+async function upsertAttendance(
+  userId,
+  status,
+  day,
+  { siteId = null, latitude = null, longitude = null, accuracy = null, workType = null } = {}
+) {
+  const user = await db.prepare('SELECT id, daily_wage, engagement_type FROM users WHERE id = ?').get(userId);
   if (!user) return;
 
   const checkIn =
     latitude != null && longitude != null ? new Date().toISOString() : null;
+  const wt = workType || user.engagement_type || 'daily_wage';
 
   await db.prepare(`
-    INSERT INTO attendance (user_id, date, status, site_id, latitude, longitude, check_in_at, geo_accuracy)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO attendance (user_id, date, status, site_id, latitude, longitude, check_in_at, geo_accuracy, work_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, date) DO UPDATE SET
       status = excluded.status,
       site_id = COALESCE(excluded.site_id, attendance.site_id),
       latitude = COALESCE(excluded.latitude, attendance.latitude),
       longitude = COALESCE(excluded.longitude, attendance.longitude),
       check_in_at = COALESCE(excluded.check_in_at, attendance.check_in_at),
-      geo_accuracy = COALESCE(excluded.geo_accuracy, attendance.geo_accuracy)
-  `).run(userId, day, status, siteId, latitude, longitude, checkIn, accuracy);
+      geo_accuracy = COALESCE(excluded.geo_accuracy, attendance.geo_accuracy),
+      work_type = COALESCE(excluded.work_type, attendance.work_type)
+  `).run(userId, day, status, siteId, latitude, longitude, checkIn, accuracy, wt);
 
   if (latitude != null && longitude != null) {
     await db.prepare(`UPDATE users SET home_lat = ?, home_lng = ? WHERE id = ?`).run(latitude, longitude, userId);
@@ -130,8 +137,8 @@ router.get('/', requireAuth, requireRole('admin', 'manager', 'resource'), async 
   });
 });
 
-router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), async (req, res) => {
-  const { userId, status, siteId, date, markAll, latitude, longitude, accuracy } = req.body || {};
+router.post('/', requireAuth, requireRole('admin', 'manager'), async (req, res) => {
+  const { userId, status, siteId, date, markAll, latitude, longitude, accuracy, workType } = req.body || {};
   const day = date || new Date().toISOString().slice(0, 10);
 
   if (!status || !['Present', 'Half day', 'Absent'].includes(status)) {
@@ -141,7 +148,7 @@ router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), async
   if (markAll && ['admin', 'manager'].includes(req.user.role)) {
     const team = await db.prepare(`SELECT id FROM users WHERE role = 'resource'`).all();
     await db.transaction(async () => {
-      for (const u of team) await upsertAttendance(u.id, status, day, { siteId: siteId || null });
+      for (const u of team) await upsertAttendance(u.id, status, day, { siteId: siteId || null, workType: workType || null });
     });
     return res.status(201).json({ ok: true, date: day, marked: team.length, status, markAll: true });
   }
@@ -149,24 +156,19 @@ router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), async
   const targetId = req.user.role === 'resource' ? req.user.id : Number(userId);
   if (!targetId) return res.status(400).json({ error: 'userId is required' });
 
-  // Partners must share GPS when marking Present / Half day
-  if (
-    req.user.role === 'resource' &&
-    (status === 'Present' || status === 'Half day') &&
-    (latitude == null || longitude == null || Number.isNaN(Number(latitude)) || Number.isNaN(Number(longitude)))
-  ) {
-    return res.status(400).json({
-      error: 'GPS check-in required. Allow location access, then mark Present again.'
-    });
+  // Partners no longer self-mark; ops/admin mark with optional day work type
+  if (req.user.role === 'resource') {
+    return res.status(403).json({ error: 'Attendance is marked by DeepKamal office' });
   }
 
   await upsertAttendance(targetId, status, day, {
     siteId: siteId || null,
     latitude: latitude != null ? Number(latitude) : null,
     longitude: longitude != null ? Number(longitude) : null,
-    accuracy: accuracy != null ? Number(accuracy) : null
+    accuracy: accuracy != null ? Number(accuracy) : null,
+    workType: workType || null
   });
-  const wageBalance = recalcWageBalance(targetId, monthKey(day));
+  const wageBalance = await recalcWageBalance(targetId, monthKey(day));
   const row = await db.prepare('SELECT * FROM attendance WHERE user_id = ? AND date = ?').get(targetId, day);
   res.status(201).json({
     ok: true,
@@ -182,23 +184,58 @@ router.post('/', requireAuth, requireRole('admin', 'manager', 'resource'), async
 });
 
 router.post('/claim', requireAuth, requireRole('resource'), async (req, res) => {
+  const { weekKey } = require('../lib/otp');
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  const wageBalance = recalcWageBalance(user.id);
-  if (user.claims_this_month >= 3) {
-    return res.status(400).json({ error: 'You have reached the maximum of 3 salary claims this month.' });
-  }
-  if (!wageBalance || wageBalance <= 0) {
-    return res.status(400).json({ error: 'No wage balance yet. Mark attendance Present to accrue wages.' });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.payment_locked) {
+    return res.status(403).json({ error: 'Payments are locked by admin. Contact DeepKamal office.' });
   }
 
-  const amount = wageBalance;
-  await db.prepare(`INSERT INTO salary_claims (user_id, amount, status) VALUES (?, ?, 'Pending')`).run(user.id, amount);
-  await db.prepare(`UPDATE users SET claims_this_month = claims_this_month + 1, wage_balance = 0 WHERE id = ?`).run(user.id);
+  const wageBalance = await recalcWageBalance(user.id);
+  if (!wageBalance || wageBalance <= 0) {
+    return res.status(400).json({ error: 'No wage balance yet.' });
+  }
+
+  const wk = weekKey();
+  const already = await db
+    .prepare(
+      `SELECT id FROM salary_claims
+       WHERE user_id = ? AND week_key = ? AND status IN ('Pending','Approved','Paid')
+       LIMIT 1`
+    )
+    .get(user.id, wk);
+  if (already) {
+    return res.status(400).json({ error: 'You can claim only once per week. Try again next week.' });
+  }
+
+  const gross = Math.round(Number(wageBalance) * 100) / 100;
+  const retained = Math.round(gross * 0.2 * 100) / 100;
+  const net = Math.round((gross - retained) * 100) / 100;
+
+  await db
+    .prepare(
+      `INSERT INTO salary_claims (user_id, amount, status, gross_amount, retained_amount, net_amount, week_key)
+       VALUES (?, ?, 'Pending', ?, ?, ?, ?)`
+    )
+    .run(user.id, net, gross, retained, net, wk);
+
+  await db
+    .prepare(
+      `UPDATE users SET
+         claims_this_month = claims_this_month + 1,
+         wage_balance = 0,
+         retained_balance = COALESCE(retained_balance, 0) + ?
+       WHERE id = ?`
+    )
+    .run(retained, user.id);
 
   res.status(201).json({
     ok: true,
-    amount,
-    claimsRemaining: 3 - (user.claims_this_month + 1)
+    weekKey: wk,
+    gross,
+    retained,
+    amount: net,
+    note: '20% retained · claim once per week'
   });
 });
 

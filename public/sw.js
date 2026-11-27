@@ -1,4 +1,4 @@
-const CACHE_NAME = 'deepkamal-shell-v20';
+const CACHE_NAME = 'deepkamal-shell-v21';
 const SHELL = [
   './app.webmanifest',
   './deepkamal-logo-cropped.png'

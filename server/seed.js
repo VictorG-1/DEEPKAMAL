@@ -90,6 +90,22 @@ async function seedLogins() {
   for (const [email, name, role, initials, color, title, team, wage, kyc] of accounts) {
     await upsertUser({ email, password: PASSWORD, name, role, initials, color, title, team, wage, kyc });
   }
+  // Demo phones so OTP login / work OTPs can deliver (WhatsApp / SMS links)
+  const phones = [
+    ['owner@deepkamal.in', '919820000001'],
+    ['manager@deepkamal.in', '919820000002'],
+    ['partner@deepkamal.in', '919820000003'],
+    ['customer@deepkamal.in', '919820000004']
+  ];
+  for (const [email, phone] of phones) {
+    await db.prepare(`UPDATE users SET phone = COALESCE(phone, ?) WHERE email = ? COLLATE NOCASE`).run(phone, email);
+  }
+  await db
+    .prepare(
+      `UPDATE clients SET phone = COALESCE(phone, '919820000004')
+       WHERE id IN (SELECT client_id FROM users WHERE email = 'customer@deepkamal.in' COLLATE NOCASE AND client_id IS NOT NULL)`
+    )
+    .run();
   // Drop legacy demo accounts if still present
   await db.prepare(`DELETE FROM users WHERE email LIKE '%@deepkamal.demo'`).run();
 }

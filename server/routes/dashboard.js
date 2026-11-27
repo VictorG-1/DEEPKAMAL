@@ -64,8 +64,11 @@ router.get('/', requireAuth, async (req, res) => {
     `).all(user.id);
     resource = {
       wageBalance: user.wage_balance,
+      retainedBalance: user.retained_balance || 0,
+      paymentLocked: Boolean(user.payment_locked),
+      engagementType: user.engagement_type || 'daily_wage',
       claimsThisMonth: user.claims_this_month,
-      claimsRemaining: Math.max(0, 3 - user.claims_this_month),
+      claimsRemaining: user.payment_locked ? 0 : 1,
       kycStatus: user.kyc_status,
       availability: user.availability,
       activeJobs: myTickets.map((t) => ({
