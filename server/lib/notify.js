@@ -1,7 +1,7 @@
 const db = require('../db');
 const { loadEnv } = require('./supabase');
 
-async function queueNotification({ channel, recipient, subject, body, link, entityType, entityId }) {
+async function queueNotification({ channel, recipient, subject, body, link, entityType, entityId, ...opts }) {
   const result = await db
     .prepare(
       `INSERT INTO notifications (channel, recipient, subject, body, link, status, entity_type, entity_id)
@@ -25,7 +25,30 @@ async function queueNotification({ channel, recipient, subject, body, link, enti
     status = env.SMTP_HOST ? 'Sent' : 'LinkReady';
     await db.prepare(`UPDATE notifications SET link = ?, status = ? WHERE id = ?`).run(mail, status, result.lastInsertRowid);
   } else if (channel === 'sms' && recipient) {
-    status = env.SMS_API_KEY ? 'Sent' : 'Queued';
+    try {
+      const { sendCombirdsSms, combirdsConfigured } = require('./combirds-sms');
+      if (combirdsConfigured()) {
+        const sent = await sendCombirdsSms({
+          to: recipient,
+          message: body,
+          otpCode: opts?.otpCode || null
+        });
+        delivery = {
+          provider: 'combirds',
+          simulated: false,
+          transactionId: sent.transactionId,
+          to: sent.to,
+          error: sent.error || null
+        };
+        status = sent.ok ? 'Sent' : 'Failed';
+      } else {
+        status = env.SMS_API_KEY ? 'Sent' : 'Queued';
+        delivery = { simulated: !env.SMS_API_KEY };
+      }
+    } catch (err) {
+      status = 'Failed';
+      delivery = { simulated: false, error: err.message };
+    }
     await db.prepare(`UPDATE notifications SET status = ? WHERE id = ?`).run(status, result.lastInsertRowid);
   } else {
     await db.prepare(`UPDATE notifications SET status = 'Logged' WHERE id = ?`).run(result.lastInsertRowid);

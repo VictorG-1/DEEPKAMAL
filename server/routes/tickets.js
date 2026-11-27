@@ -379,7 +379,7 @@ router.post('/:id/otp/start', requireAuth, requireRole('admin', 'manager', 'reso
   const issued = await issueOtp({
     purpose: 'work_start',
     target,
-    channel: partner.phone ? 'whatsapp' : 'email',
+    channel: partner.phone ? 'sms' : 'email',
     entityType: 'ticket',
     entityId: ticket.id,
     userId: partner.id,
@@ -429,7 +429,7 @@ router.post('/:id/otp/complete', requireAuth, requireRole('admin', 'manager', 'r
   const issued = await issueOtp({
     purpose: 'work_complete',
     target,
-    channel: client?.phone || customer?.phone ? 'whatsapp' : 'email',
+    channel: client?.phone || customer?.phone ? 'sms' : 'email',
     entityType: 'ticket',
     entityId: ticket.id,
     subject: `Completion OTP · ${ticket.code}`,

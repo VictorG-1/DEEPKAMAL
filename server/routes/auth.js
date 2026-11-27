@@ -33,7 +33,7 @@ function publicUser(user) {
 }
 
 function otpTargetFor(user) {
-  if (user.phone) return { target: user.phone, channel: 'whatsapp' };
+  if (user.phone) return { target: user.phone, channel: 'sms' };
   if (user.email) return { target: user.email, channel: 'email' };
   return null;
 }

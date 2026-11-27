@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const { queueNotification } = require('./notify');
 const { loadEnv } = require('./supabase');
+const { combirdsConfigured, buildOtpMessage, normalizeIndianMobile } = require('./combirds-sms');
 
 function hashCode(code) {
   return crypto.createHash('sha256').update(String(code)).digest('hex');
@@ -15,13 +16,18 @@ function expiresInMinutes(mins = 10) {
   return new Date(Date.now() + mins * 60 * 1000).toISOString();
 }
 
+function looksLikePhone(target) {
+  return normalizeIndianMobile(target).ok || /^\+?\d{10,15}$/.test(String(target || '').replace(/\s/g, ''));
+}
+
 /**
- * Create + deliver OTP. In demo (no SMS/SMTP keys) returns `devCode` so UI can show it.
+ * Create + deliver OTP via Combirds SMS when configured.
+ * Returns `devCode` only when SMS is not configured or delivery failed (so ops can still proceed).
  */
 async function issueOtp({
   purpose,
   target,
-  channel = 'sms',
+  channel = null,
   entityType = null,
   entityId = null,
   userId = null,
@@ -48,23 +54,31 @@ async function issueOtp({
       expiresAt
     );
 
-  const body = `${bodyPrefix} ${code}. Valid 10 minutes. Do not share.`;
+  const env = loadEnv();
+  const phoneTarget = looksLikePhone(target);
+  const preferSms = phoneTarget && combirdsConfigured();
+  const resolvedChannel = channel || (preferSms ? 'sms' : phoneTarget ? 'whatsapp' : 'email');
+
+  const smsBody = preferSms || resolvedChannel === 'sms' ? buildOtpMessage(code, env) : `${bodyPrefix} ${code}. Valid 10 minutes. Do not share.`;
+
   const notify = await queueNotification({
-    channel,
+    channel: preferSms ? 'sms' : resolvedChannel,
     recipient: target,
     subject,
-    body,
+    body: smsBody,
     entityType: entityType || 'otp',
-    entityId: entityId || result.lastInsertRowid
+    entityId: entityId || result.lastInsertRowid,
+    otpCode: code
   });
 
-  const env = loadEnv();
-  const demo = !(env.SMS_API_KEY || env.SMTP_HOST || env.WHATSAPP_API_KEY);
+  const smsOk = preferSms && notify?.status === 'Sent';
+  const demo = !combirdsConfigured() || !smsOk;
 
   return {
     otpId: result.lastInsertRowid,
     expiresAt,
     delivery: notify,
+    channel: preferSms ? 'sms' : resolvedChannel,
     ...(demo ? { devCode: code } : {})
   };
 }
