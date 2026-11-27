@@ -2343,6 +2343,7 @@ function openPartnerOps(partnerId) {
         : ''
     }
   `);
+  bindPhoneInputs(document.getElementById('sheetBody') || document);
   document.getElementById('opsForm').onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
